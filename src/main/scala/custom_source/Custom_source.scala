@@ -26,17 +26,19 @@ object Custom_source {
         head("scopt", "4.x"),
         opt[Boolean]("DEBUG")
           .action((x, c) => c.copy(DEBUG = x))
-          .text("DEBUG is a Boolean property"),
+          .text("(Optional) DEBUG is a Boolean property"),
         opt[String]("dataset")
           .action((x, c) => c.copy(dataset = x))
+          .required()
           .validate( x => {
             if (x == "TAO" || x == "STK") success
             else failure("dataset property can only be set as [TAO|STK]")
           })
-          .text("Dataset property contains the type of dataset that will be used in the PROUD application" +
+          .text("Represents the dataset selected for the input. Affects the partitioning technique" +
             "It can either be set to 'TAO' or 'STK'"),
         opt[String]("checkPointDir")
           .action((x, c) => c.copy(dataset = x))
+          .required()
           .validate( x => {
             if (x.startsWith("/")) success
             else failure("The Checkpoint Directory should be a full path directory starting with '/'")

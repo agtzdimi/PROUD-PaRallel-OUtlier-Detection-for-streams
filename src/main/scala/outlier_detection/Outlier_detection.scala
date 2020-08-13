@@ -4,7 +4,8 @@ import java.util.Properties
 
 import utils.Helpers.find_gcd
 import models._
-import org.apache.flink.api.java.utils.ParameterTool
+
+import scopt.OParser
 import org.apache.flink.api.scala.createTypeInformation
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.flink.streaming.api.TimeCharacteristic
@@ -28,22 +29,104 @@ object Outlier_detection {
 
   def main(args: Array[String]) {
 
-    val parameters: ParameterTool = ParameterTool.fromArgs(args)
-    val DEBUG = parameters.get("DEBUG", "false").toBoolean
-    //Won't work without these two parameter
-    val parameter_space = parameters.getRequired("space") //single, rk, rkws
-    val algorithm = parameters.getRequired("algorithm") //naive, advanced, advanced_extended, slicing, pmcod, pmcod_net, amcod, sop, psod, pmcsky
-    //Windowing Parameters
-    val window_W = parameters.getRequired("W").split(delimiter).toList.map(_.toInt)
-    val window_S = parameters.getRequired("S").split(delimiter).to[ListBuffer].map(_.toInt)
-    //Application Parameters
-    val app_k = parameters.getRequired("k").split(delimiter).toList.map(_.toInt)
-    val app_R = parameters.getRequired("R").split(delimiter).toList.map(_.toDouble)
-    //Input Parameters
-    val dataset = parameters.getRequired("dataset") //STK, TAO
-    //Partitioning Parameters
-    val partitioning = parameters.getRequired("partitioning") //replication, grid, tree
-    val tree_init = parameters.get("tree_init", "10000").toInt
+    case class Config(
+                       DEBUG: Boolean = false,
+                       dataset: String = "",
+                       space: String = "",
+                       checkPointDir: String = "",
+                       algorithm: String = "",
+                       W: List[Int] = List.empty[Int],
+                       S: ListBuffer[Int] = ListBuffer.empty[Int],
+                       k: List[Int] = List.empty[Int],
+                       R: List[Double] = List.empty[Double],
+                       partitioning: String = "",
+                       tree_init: Int = 10000,
+                       kwargs: Map[String, String] = Map())
+
+    val builder = OParser.builder[Config]
+
+    val parser = {
+      import builder._
+      OParser.sequence(
+        programName("PROUD Spark Streaming"),
+        head("scopt", "4.x"),
+        opt[Boolean]("DEBUG")
+          .action((x, c) => c.copy(DEBUG = x))
+          .text("(Optional) DEBUG is a Boolean property"),
+        opt[String]("dataset")
+          .action((x, c) => c.copy(dataset = x))
+          .required()
+          .validate( x => {
+            if (x == "TAO" || x == "STK") success
+            else failure("dataset property can only be set as [TAO|STK]")
+          })
+          .text("Represents the dataset selected for the input. Affects the partitioning technique" +
+            "It can either be set to 'TAO' or 'STK'"),
+        opt[String]("space")
+          .action((x, c) => c.copy(space = x))
+          .required()
+          .validate( x => {
+            if (x == "single" || x == "rk" || x == "rkws") success
+            else failure("space property can only be set as [single|rk|rkws]")
+          })
+          .text("Represents the query space. Possible values are \"single\" for single-query, \"rk\" for multi-query with multiple application parameters and \"rkws\" for multi-query with both multiple application and windowing parameters"),
+        opt[String]("algorithm")
+          .action((x, c) => c.copy(algorithm = x))
+          .required()
+          .validate( x => {
+            if (x == "naive" || x == "advanced" || x == "advanced_extended" || x == "slicing" ||
+              x == "pmcod" || x == "pmcod_net" || x == "amcod" || x == "sop" || x == "psod" || x == "pmcsky") success
+            else failure("algorithm property can only be set as [naive|advanced|advanced_extended|slicing|pmcod|pmcod_net|amcod|sop|psod|pmcsky]")
+          })
+          .text("Represents the outlier detection algorithm. Possible values for single-query space are: \"naive\", \"advanced\", \"advanced_extended\", \"slicing\", \"pmcod\" and \"pmcod_net\". Possible values for multi-query space are \"amcod\", \"sop\", \"psod\" and \"pmcsky\""),
+        opt[String]("checkPointDir")
+          .action((x, c) => c.copy(dataset = x))
+          .required()
+          .validate( x => {
+            if (x.startsWith("/")) success
+            else failure("The Checkpoint Directory should be a full path directory starting with '/'")
+          })
+          .text("checkPointDir contains the full path directory to store the spark checkpoint of the application"),
+        opt[String]("W")
+          .action((x, c) => c.copy(W = x.split(delimiter).toList.map(_.toInt)))
+          .required()
+          .text("Windowing parameter. Represents the window size. On the multi-query space many values can be given delimited by \";\""),
+        opt[String]("S")
+          .action((x, c) => c.copy(S = x.split(delimiter).to[ListBuffer].map(_.toInt)))
+          .required()
+          .text("Windowing parameter. Represents the slide size. On the multi-query space many values can be given delimited by \";\""),
+        opt[String]("k")
+          .action((x, c) => c.copy(k = x.split(delimiter).toList.map(_.toInt)))
+          .required()
+          .text("Application parameter. Represents the minimum number of neighbors a data point must have in order to be an inlier. On the multi-query space many values can be given delimited by \";\""),
+        opt[String]("R")
+          .action((x, c) => c.copy(R = x.split(delimiter).toList.map(_.toDouble)))
+          .required()
+          .text("Application parameter. Represents the maximum distance that two data points can have to be considered neighbors. On the multi-query space many values can be given delimited by \";\""),
+        opt[String]("partitioning")
+          .action((x, c) => c.copy(partitioning = x))
+          .required()
+          .validate( x => {
+            if (x == "replication" || x == "grid" || x == "tree") success
+            else failure("Represents the partitioning technique chosen for the job. \"replication\" partitioning is mandatory for \"naive\" and \"advanced\" algorithms whilst \"grid\" and \"tree\" partitioning is available for every other algorithm. \"grid\" technique needs pre-recorded data on the dataset's distribution. \"tree\" technique needs a file containing data points from the dataset in order to initialize the VP-tree")
+          })
+          .text("partitioning can either be set to 'replication'/'grid'/'tree'"),
+        opt[Int]("tree_init")
+          .action((x, c) => c.copy(tree_init = x))
+          .text("(Optional) Represents the number of data points to be read for initialization by the \"tree\" partitioning technique. Default value is 10000"),
+      )
+    }
+
+    var arguments: Config = Config()
+
+    // OParser.parse returns Option[Config]
+    OParser.parse(parser, args, Config()) match {
+      case Some(config) =>
+        arguments = Config(config.DEBUG,config.dataset,config.space,config.checkPointDir,config.algorithm,config.W,config.S,config.k,config.R,config.partitioning,config.tree_init)
+      case _ =>
+      // arguments are bad, error message will have been displayed
+    }
+    
     //Hardcoded parameter for partitioning and windowing
     val partitions = 16
     //Input file
@@ -52,25 +135,25 @@ object Outlier_detection {
     val kafka_topic = System.getenv("KAFKA_TOPIC") //File input
 
     //Pre-process parameters for initializations
-    val common_W = if (window_W.length > 1) window_W.max else window_W.head
-    val common_S = if (window_S.length > 1) find_gcd(window_S) else window_S.head
-    val common_R = if (app_R.length > 1) app_R.max else app_R.head
+    val common_W = if (arguments.W.length > 1) arguments.W.max else arguments.W.head
+    val common_S = if (arguments.S.length > 1) find_gcd(arguments.S) else arguments.S.head
+    val common_R = if (arguments.R.length > 1) arguments.R.max else arguments.R.head
     //Variable to allow late data points within the specific time be ingested by the job
     val allowed_lateness = common_S
 
     //Create query/queries
     val myQueries = new ListBuffer[Query]()
-    for (w <- window_W)
-      for (s <- window_S)
-        for (r <- app_R)
-          for (k <- app_k)
+    for (w <- arguments.W)
+      for (s <- arguments.S)
+        for (r <- arguments.R)
+          for (k <- arguments.k)
             myQueries += Query(r, k, w, s, 0)
 
 
     //Create the tree for the specified partitioning type
-    val myTree = if (partitioning == "tree") {
-      val tree_input = s"$file_input/$dataset/tree_input.txt"
-      new Tree_partitioning(tree_init, partitions, tree_input)
+    val myTree = if (arguments.partitioning == "tree") {
+      val tree_input = s"$file_input/$arguments.dataset/tree_input.txt"
+      new Tree_partitioning(arguments.tree_init, partitions, tree_input)
     }
     else null
 
@@ -94,8 +177,8 @@ object Outlier_detection {
 
     //Start reading from source
     //Either kafka or input file for debug
-    val data: DataStream[Data_basis] = if (DEBUG) {
-      val myInput = s"$file_input/$dataset/input_20k.txt"
+    val data: DataStream[Data_basis] = if (arguments.DEBUG) {
+      val myInput = s"$file_input/$arguments.arguments.dataset/input_20k.txt"
       env
         .readTextFile(myInput)
         .map { record =>
@@ -120,13 +203,13 @@ object Outlier_detection {
     }
 
     //Start partitioning
-    val partitioned_data = partitioning match {
+    val partitioned_data = arguments.partitioning match {
       case "replication" =>
         data
           .flatMap(record => replication_partitioning(partitions, record))
       case "grid" =>
         data
-          .flatMap(record => grid_partitioning(partitions, record, common_R, dataset))
+          .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
       case "tree" =>
         data
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
@@ -140,9 +223,9 @@ object Outlier_detection {
     //Start by mapping the basic data point to the algorithm's respective class
     //Key the data by partition and window them
     //Call the algorithm process
-    val output_data = parameter_space match {
+    val output_data = arguments.space match {
       case "single" =>
-        algorithm match {
+        arguments.algorithm match {
           case "naive" =>
             val firstWindow: DataStream[Data_naive] = timestamped_data
               .map(record => (record._1, new Data_naive(record._2)))
@@ -197,7 +280,7 @@ object Outlier_detection {
               .process(new single_query.Pmcod_net(myQueries.head))
         }
       case "rk" =>
-        algorithm match {
+        arguments.algorithm match {
           case "amcod" =>
             timestamped_data
               .map(record => (record._1, new Data_amcod(record._2)))
@@ -228,7 +311,7 @@ object Outlier_detection {
               .process(new rk_query.PmcSky(myQueries))
         }
       case "rkws" =>
-        algorithm match {
+        arguments.algorithm match {
           case "sop" =>
             timestamped_data
               .map(record => (record._1, new Data_lsky(record._2)))
@@ -254,7 +337,7 @@ object Outlier_detection {
     }
 
     //Start writing output
-    if(DEBUG){
+    if(arguments.DEBUG){
     output_data
       .keyBy(_._1)
       .timeWindow(Time.milliseconds(common_S))
