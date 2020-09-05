@@ -1,25 +1,12 @@
-ThisBuild / resolvers ++= Seq("Apache Development Snapshot Repository" at "https://repository.apache.org/content/repositories/snapshots/", Resolver.mavenLocal)
-
 ThisBuild / version := "3.1.0"
 ThisBuild / organization := "org.auth.csd.datalab"
-ThisBuild / scalaVersion := "2.11.12"
-
-val flinkVersion = "1.9.0"
-
-val flinkDependencies = Seq(
-  "org.apache.flink" %% "flink-scala" % flinkVersion % "provided",
-  "org.apache.flink" %% "flink-streaming-scala" % flinkVersion % "provided",
-  "org.apache.flink" %% "flink-connector-kafka" % flinkVersion,
-  "org.apache.bahir" %% "flink-connector-influxdb" % "1.1-SNAPSHOT"
-)
+ThisBuild / scalaVersion := "2.12.12"
 
 val sparkVersion = "2.4.5"
 
 lazy val root = (project in file(".")).
   settings(
-    name := "PROUD",
-    libraryDependencies ++= flinkDependencies,
-    libraryDependencies += "org.apache.kafka" % "kafka-clients" % "2.2.1"
+    name := "PROUD"
   )
 
 libraryDependencies ++= Seq(
@@ -28,15 +15,22 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-mllib" % sparkVersion,
   "org.apache.spark" %% "spark-streaming" % sparkVersion,
   "org.apache.spark" %% "spark-hive" % sparkVersion,
-  "org.apache.spark" %% "spark-mllib-local" % sparkVersion
+  "org.apache.spark" %% "spark-mllib-local" % sparkVersion,
 )
 
-libraryDependencies += "com.github.scopt" % "scopt_2.11" % "4.0.0-RC2"
-libraryDependencies += "org.apache.spark" % "spark-streaming_2.11" % sparkVersion
-libraryDependencies += "org.apache.spark" % "spark-streaming-kafka-0-10-assembly_2.11" % sparkVersion
+libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.0-RC2"
 
+libraryDependencies += "org.apache.spark" % "spark-sql-kafka-0-10_2.12" % sparkVersion
+// For RDD
+libraryDependencies += "com.github.fsanaulla" %% "chronicler-spark-rdd" % "0.4.1"
+// For Dataset
+libraryDependencies += "com.github.fsanaulla" %% "chronicler-spark-ds" % "0.4.1"
+// For Structured Streaming
+libraryDependencies += "com.github.fsanaulla" %% "chronicler-spark-structured-streaming" % "0.4.1"
+// For DStream
+libraryDependencies += "com.github.fsanaulla" %% "chronicler-spark-streaming" % "0.4.1"
 
-assembly / mainClass := Some("outlier_detection.Outlier_detection")
+libraryDependencies += "com.github.fsanaulla" %% "chronicler-spark-streaming" % "0.4.1"
 
 // make run command include the provided dependencies
 Compile / run  := Defaults.runTask(
@@ -45,10 +39,5 @@ Compile / run  := Defaults.runTask(
   Compile / run / runner
 ).evaluated
 
-// stays inside the sbt console when we press "ctrl-c" while a Flink programme executes with "run" or "runMain"
 Compile / run / fork := true
 Global / cancelable := true
-
-// exclude Scala library from assembly
-assembly / assemblyOption  := (assembly / assemblyOption).value.copy(includeScala = false)
-
