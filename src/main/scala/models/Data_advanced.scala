@@ -4,7 +4,7 @@ import mtree.DistanceFunctions.EuclideanCoordinate
 
 class Data_advanced(c_point: Data_basis) extends Data_naive(c_point: Data_basis) with EuclideanCoordinate with Comparable[Data_advanced] with Ordered[Data_advanced]  {
 
-  def canEqual(other: Any): Boolean = other.isInstanceOf[Data_advanced]
+  override def canEqual(other: Any): Boolean = other.isInstanceOf[Data_advanced]
 
   override def equals(other: Any): Boolean = other match {
     case that: Data_advanced =>

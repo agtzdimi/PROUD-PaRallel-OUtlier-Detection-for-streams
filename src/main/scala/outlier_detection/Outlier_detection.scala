@@ -1,27 +1,34 @@
 package outlier_detection
 
 import java.time.temporal.TemporalAccessor
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoField
 
 import com.github.fsanaulla.chronicler.core.alias.ErrorOr
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.spark.structured.streaming._
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
+import models.{Data_advanced, Data_basis, Data_naive}
 import org.apache.log4j.{Level, Logger}
+import org.apache.spark.sql.functions.window
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.streaming.{Seconds, Time}
+import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
 import utils.Helpers.find_gcd
 import utils.Utils.Query
+import partitioning.Replication.replication_partitioning
+import partitioning.Grid.grid_partitioning
 
 import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
 
+  import java.time.ZoneOffset
+  import java.time.format.DateTimeFormatter
+  import java.time.temporal.ChronoField
   val delimiter = ";"
 
   implicit val wr: InfluxWriter[Row] = new InfluxWriter[Row] {
@@ -58,7 +65,6 @@ object Outlier_detection {
     Logger.getLogger("org").setLevel(Level.ERROR)
     Logger.getLogger("akka").setLevel(Level.ERROR)
     val sc = new SparkContext(conf)
-    println("Hola")
 
     case class Config(
                        DEBUG: Boolean = false,
@@ -205,7 +211,7 @@ object Outlier_detection {
     println(kafka_brokers)
     println(kafka_topic)
 
-    val df = if (arguments.DEBUG) {
+    val data = if (arguments.DEBUG) {
       val myInput = s"$file_input/$arguments.arguments.dataset/input_20k.txt"
       val debugFile = spark.readStream.text(myInput)
       debugFile
@@ -219,17 +225,8 @@ object Outlier_detection {
       kafkaDF
     } // for .toDF() method
 
-    // Publish to Kafka Topic
-    /*val ds = df
-      .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
-      .writeStream
-      .format("kafka")
-      .option("kafka.bootstrap.servers", kafka_brokers)
-      .option("topic", "topic1")
-      .start() */
-
     // Publish data to console
-    val query = df
+    val query = data
       .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
       .writeStream
       .format("console")
@@ -255,45 +252,62 @@ object Outlier_detection {
       )
     )
 
-    val saved = df
+    val saveToInflux = data
       .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
       .writeStream
       .saveToInfluxDB(influxdb_db, handler)
       .start()
-    query.awaitTermination()
-    saved.awaitTermination()
-    // ds.awaitTermination()
+
+    import models.ExtraDataFrameOperations.implicits._
+    import spark.implicits._
+
+    val data2 = data
+      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")
+      .map( (record) => {
+      println(record.get(1))
+      new Data_basis(List(record.get(0).toString(),record.get(1).toString()), 0)
+    })
+
 
     //Start partitioning
-    /*val partitioned_data = arguments.partitioning match {
+    val partitioned_data = arguments.partitioning match {
       case "replication" =>
-        data
+        data2
           .flatMap(record => replication_partitioning(partitions, record))
       case "grid" =>
-        data
+        data2
           .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
       case "tree" =>
-        data
+        data2
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
-    }*/
+    }
 
-    spark.stop()
-
+    val test = partitioned_data
+      .writeStream
+      .trigger(Trigger.ProcessingTime("10 seconds"))
+      .outputMode("append")
+      .format("console")
+      .option("truncate", false)
+      .start()
+    test.awaitTermination()
+    query.awaitTermination()
+    saveToInflux.awaitTermination()
     //Timestamp the data
 
     //Start algorithm
     //Start by mapping the basic data point to the algorithm's respective class
     //Key the data by partition and window them
     //Call the algorithm process
-    /*val output_data = arguments.space match {
+ /*   val output_data = arguments.space match {
       case "single" =>
         arguments.algorithm match {
           case "naive" =>
             val firstWindow: DStream[Data_naive] = partitioned_data
               .map(record => (record._1, new Data_naive(record._2)))
-              .groupByKey()
-              .window(Seconds(common_W),Seconds(common_S))
-              .allowedLateness(Time.milliseconds(allowed_lateness))
+              .groupBy(
+                window($"timestamp", s"$common_W seconds", s"$common_S seconds")
+              )
+
               .evictor(new Evict_before(common_S))
               .process(new single_query.Naive(myQueries.head))
             firstWindow
@@ -397,7 +411,7 @@ object Outlier_detection {
               .process(new rkws_query.PmcSky(myQueries, common_S))
         }
     }
-    
+
     //Start writing output
     if(arguments.DEBUG){
     output_data
@@ -413,6 +427,7 @@ object Outlier_detection {
         .addSink(new InfluxDBSink(influx_conf))
     }
     env.execute("Distance-based outlier detection with Flink")*/
+    spark.stop()
   }
 
 }

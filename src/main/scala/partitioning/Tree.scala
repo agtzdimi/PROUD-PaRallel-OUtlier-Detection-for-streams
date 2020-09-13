@@ -2,6 +2,7 @@ package partitioning
 
 import jvptree.VPTree
 import models.Data_basis
+import org.apache.spark.sql.Row
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
@@ -20,7 +21,7 @@ object Tree {
           .toList
           .map(p => {
             val value = p.split(",").to[ListBuffer].map(_.toDouble)
-            new Data_basis(0, value, 0L, 0)
+            new Data_basis(List(0.toString(), value.toString(), 0L.toString()), 0)
           })
           .asJava
       myFile.close()
@@ -47,7 +48,7 @@ object Tree {
       list.+=((neighbors.head, point))
       if (neighbors.size > 1) {
         for (i <- 1 until neighbors.size) {
-          list.+=((neighbors(i), new Data_basis(point.id, point.value, point.arrival, 1)))
+          list.+=((neighbors(i), new Data_basis(point.dataframe, 1)))
         }
       }
       list
