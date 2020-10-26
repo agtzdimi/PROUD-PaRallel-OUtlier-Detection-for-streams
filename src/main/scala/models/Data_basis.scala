@@ -19,7 +19,6 @@ object ExtraDataFrameOperations {
 
 case class Data_basis(row: List[String],c_flag: Int) extends Serializable {
 
-
   val dataframe: List[String] = row
   val id: Int = row(0).toString().split(",")(0).toInt
   val value: ListBuffer[Double] = row(0).toString().split(",")(1).split(delimiter).map(_.toDouble).to[ListBuffer]

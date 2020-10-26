@@ -7,9 +7,9 @@ import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWrit
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.spark.structured.streaming._
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
-import models.{Data_advanced, Data_basis, Data_naive}
+import models.{Data_basis, Data_naive}
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.window
+import org.apache.spark.sql.functions.{col, collect_set, window}
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.streaming.{Seconds, Time}
@@ -189,7 +189,6 @@ object Outlier_detection {
           for (k <- arguments.k)
             myQueries += Query(r, k, w, s, 0)
 
-
     //Create the tree for the specified partitioning type
     val myTree = if (arguments.partitioning == "tree") {
       val tree_input = s"$file_input/$arguments.dataset/tree_input.txt"
@@ -268,6 +267,17 @@ object Outlier_detection {
       new Data_basis(List(record.get(0).toString(),record.get(1).toString()), 0)
     })
 
+    val windows = data
+      .withWatermark("timestamp",s"$common_W seconds")
+      .groupBy(
+        window($"timestamp", s"$common_W seconds", s"$common_S seconds"),$"key",$"value"
+      )
+      .agg($"key".cast("String").as("FinalKey"), $"value".cast("String").as("FinalValue"))
+      .writeStream
+      .outputMode("complete")
+      .format("console")
+      .option("truncate", false)
+      .start()
 
     //Start partitioning
     val partitioned_data = arguments.partitioning match {
@@ -282,15 +292,23 @@ object Outlier_detection {
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
     }
 
-    val test = partitioned_data
-      .writeStream
-      .trigger(Trigger.ProcessingTime("10 seconds"))
-      .outputMode("append")
-      .format("console")
-      .option("truncate", false)
-      .start()
-    test.awaitTermination()
+      /*val test = partitioned_data
+        .map(record => {
+          val naiv = new Data_naive(record._2)
+          val q = new single_query.Naive(myQueries.head)
+          println("PAIOJK")
+          println(record._1, naiv)
+          //println(q.process((record._1,naiv), aggrDF, spark))
+          record
+        })
+        .writeStream
+        .outputMode("append")
+        .format("console")
+        .option("truncate", false)
+        .start()
+    test.awaitTermination()*/
     query.awaitTermination()
+    windows.awaitTermination()
     saveToInflux.awaitTermination()
     //Timestamp the data
 
