@@ -1,68 +1,70 @@
 package single_query
 
-import utils.Utils.Query
-import utils.Helpers.distance
 import models.Data_naive
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import utils.Helpers.distance
+import utils.Utils.Query
 
+import scala.collection.JavaConverters.asScalaIteratorConverter
 import scala.collection.mutable.ListBuffer
 
 class Naive(c_query: Query) {
 
-  @transient private var cpu_time: Long = 0L
-
   val slide: Int = c_query.S
   val R: Double = c_query.R
   val k: Int = c_query.k
+  @transient private var counter: Int = _
+  @transient private var cpu_time: Long = 0L
 
-  def process(element: (Int, Data_naive), data: DataFrame, spark: SparkSession) = {
+  def process(elements: Dataset[(Int, Data_naive)], windowEnd: Long, spark: SparkSession): Unit = {
+      //Metrics
+      counter += 1
+      val time_init = System.currentTimeMillis()
+      import spark.implicits._
+      val window = windowEnd
+      val inputList = elements.rdd.map(_._2).collect().toList
 
-    import spark.implicits._
-
-    var outliers = new ListBuffer[(Int, Data_naive)]()
-    //Metrics
-    val time_init = System.currentTimeMillis()
-
-    val inputList = data.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)").map(r => (r.getAs[Int](0), r.getAs[Data_naive](1))).collect.toList
-
-    inputList.foreach(p => {
-      refreshList(p, inputList)
-    })
-    inputList.foreach(p => {
-      if (!p._2.safe_inlier) {
+      inputList.filter(_.arrival >= window - slide).foreach(p => {
+        refreshList(p, inputList, window)
+      })
+      inputList.foreach(p => {
         println(p)
-        outliers += p
-      }
-    })
+        if (!p.safe_inlier) {
+          print(p)
+        }
+      })
 
-    //Metrics
-    val time_final = System.currentTimeMillis()
-    cpu_time += (time_final - time_init)
 
-    outliers
+      //Metrics
+      val time_final = System.currentTimeMillis()
+      cpu_time += (time_final - time_init)
   }
 
-  def refreshList(node: (Int, Data_naive), nodes: List[(Int, Data_naive)]): Unit = {
+  def refreshList(node: Data_naive, nodes: List[Data_naive], window: Long): Unit = {
     if (nodes.nonEmpty) {
       val neighbors = nodes
-        .filter(_._2.id != node._2.id)
-        .map(x => (x, distance(x._2.value.toArray, node._2.value.toArray)))
+        .filter(_.id != node.id)
+        .map(x => (x, distance(x.value.toArray, node.value.toArray)))
         .filter(_._2 <= R).map(_._1)
 
       neighbors
         .foreach(x => {
-          node._2.count_after += 1
-            if (node._2.count_after >= k) {
-              node._2.safe_inlier = true
+          if (x.arrival < window - slide) {
+            node.insert_nn_before(x.arrival, k)
+          } else {
+            node.count_after += 1
+            if (node.count_after >= k) {
+              node.safe_inlier = true
             }
+          }
         })
 
       nodes
-        .filter(x => neighbors.contains(x))
+        .filter(x => x.arrival < window - slide && neighbors.contains(x))
         .foreach(n => {
-          n._2.count_after += 1
-          if (n._2.count_after >= k) {
-            n._2.safe_inlier = true
+          n.count_after += 1
+          if (n.count_after >= k) {
+            n.safe_inlier = true
           }
         }) //add new neighbor to previous nodes
     }

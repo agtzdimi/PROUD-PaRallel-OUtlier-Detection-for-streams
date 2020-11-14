@@ -27,7 +27,7 @@ object Grid {
     list.+=((belongs_to, point))
     if (neighbors.nonEmpty) {
       neighbors.foreach(p => {
-        list.+=((p, new Data_basis(point.dataframe, 1)))
+        list.+=((p, new Data_basis(point.id, point.value, point.arrival, 1)))
       })
     }
     list

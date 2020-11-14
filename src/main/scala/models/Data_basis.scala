@@ -1,35 +1,25 @@
 package models
 
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.time.temporal.{ChronoField, TemporalAccessor}
-
-import org.apache.spark.sql.DataFrame
-import outlier_detection.Outlier_detection.{dateTimeStringToEpoch, delimiter}
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types._
-
 import scala.collection.mutable.ListBuffer
 
 object ExtraDataFrameOperations {
   object implicits {
-    implicit def dFWithExtraOperations(df: List[String],flag: Int) = Data_basis(df, flag)
+    implicit def dFWithExtraOperations(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) = Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int)
   }
 }
 
-case class Data_basis(row: List[String],c_flag: Int) extends Serializable {
+case class Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) extends Serializable {
 
-  val dataframe: List[String] = row
-  val id: Int = row(0).toString().split(",")(0).toInt
-  val value: ListBuffer[Double] = row(0).toString().split(",")(1).split(delimiter).map(_.toDouble).to[ListBuffer]
+  val id: Int = c_id
+  val value: ListBuffer[Double] = c_val
   val dimensions: Int = value.length
-  val arrival: Long = dateTimeStringToEpoch(row(1),"yyyy-MM-dd HH:mm:ss.SSS")
+  val arrival: Long = c_arrival
   val flag: Int = c_flag
   val state: Seq[ListBuffer[Double]] = Seq(value)
   val hashcode: Int = state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
 
-  def this(dfPoint: Data_basis){
-    this(dfPoint.dataframe,dfPoint.flag)
+  def this(point: Data_basis){
+    this(point.id, point.value, point.arrival, point.flag)
   }
 
 

@@ -4,7 +4,7 @@ import mtree.DistanceFunctions.EuclideanCoordinate
 
 import scala.collection.mutable
 
-class Data_slicing(c_point: Data_basis) extends Data_basis(c_point.dataframe, c_point.flag) with EuclideanCoordinate with Comparable[Data_slicing] with Ordered[Data_slicing]  {
+class Data_slicing(c_point: Data_basis) extends Data_basis(c_point.id, c_point.value, c_point.arrival, c_point.flag) with EuclideanCoordinate with Comparable[Data_slicing] with Ordered[Data_slicing]  {
 
   //Neighbor data
   var count_after: Int = 0

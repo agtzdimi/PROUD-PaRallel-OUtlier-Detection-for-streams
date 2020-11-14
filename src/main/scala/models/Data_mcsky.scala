@@ -3,7 +3,7 @@ package models
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-class Data_mcsky(c_point: Data_basis) extends Data_basis(c_point.dataframe, c_point.flag) {
+class Data_mcsky(c_point: Data_basis) extends Data_basis(c_point.id, c_point.value, c_point.arrival, c_point.flag) {
 
   //Neighbor data
   var lSky = mutable.HashMap[Int, ListBuffer[(Int,Long)]]()
@@ -13,9 +13,9 @@ class Data_mcsky(c_point: Data_basis) extends Data_basis(c_point.dataframe, c_po
   var mc: Int = -1
 
   //Clear variables
-   def clear(newMc: Int): Unit = {
-     lSky.clear()
-     mc = newMc
+  def clear(newMc: Int): Unit = {
+    lSky.clear()
+    mc = newMc
   }
 
 }

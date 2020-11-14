@@ -11,7 +11,8 @@ import models.{Data_basis, Data_naive}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.functions.{col, collect_set, window}
 import org.apache.spark.sql.streaming.Trigger
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.TimestampType
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.streaming.{Seconds, Time}
 import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.{SparkConf, SparkContext}
@@ -257,58 +258,52 @@ object Outlier_detection {
       .saveToInfluxDB(influxdb_db, handler)
       .start()
 
-    import models.ExtraDataFrameOperations.implicits._
     import spark.implicits._
 
-    val data2 = data
-      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")
-      .map( (record) => {
-      println(record.get(1))
-      new Data_basis(List(record.get(0).toString(),record.get(1).toString()), 0)
-    })
-
-    val windows = data
+    var key: Int =0
+    val windowedData = data
+      .withColumn("timestamp", ($"timestamp").cast(TimestampType))
       .withWatermark("timestamp",s"$common_W seconds")
       .groupBy(
-        window($"timestamp", s"$common_W seconds", s"$common_S seconds"),$"key",$"value"
+        window($"timestamp", s"$common_W seconds", s"$common_S seconds"),$"key",$"value",$"timestamp"
       )
-      .agg($"key".cast("String").as("FinalKey"), $"value".cast("String").as("FinalValue"))
+      .agg($"key", $"value".cast("String").as("FinalValue"), $"timestamp")
+      .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)","window")
       .writeStream
       .outputMode("complete")
-      .format("console")
-      .option("truncate", false)
+      .trigger(Trigger.ProcessingTime(10))
+      .foreachBatch {
+        (batchDs: Dataset[Row], batchId: Long) =>
+          val data2 = batchDs
+            .map( (record) => {
+              import models.ExtraDataFrameOperations.implicits._
+              val windowTimes = record.get(2).toString()
+              key += 1
+              val date = dateTimeStringToEpoch(windowTimes, "yyyy-MM-dd HH:mm:ss.SSS")
+              new Data_basis(key,ListBuffer(record.get(1).toString().split(",").map(_.toDouble): _ *),date, 0)
+            })
+
+          //Start partitioning
+          val partitioned_data = arguments.partitioning match {
+            case "replication" =>
+              data2
+                .flatMap(record => replication_partitioning(partitions, record))
+            case "grid" =>
+              data2
+                .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
+            case "tree" =>
+              data2
+                .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
+          }
+
+          val naiveQ = new single_query.Naive(myQueries.head)
+          naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
+      }
       .start()
 
-    //Start partitioning
-    val partitioned_data = arguments.partitioning match {
-      case "replication" =>
-        data2
-          .flatMap(record => replication_partitioning(partitions, record))
-      case "grid" =>
-        data2
-          .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
-      case "tree" =>
-        data2
-          .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
-    }
 
-      /*val test = partitioned_data
-        .map(record => {
-          val naiv = new Data_naive(record._2)
-          val q = new single_query.Naive(myQueries.head)
-          println("PAIOJK")
-          println(record._1, naiv)
-          //println(q.process((record._1,naiv), aggrDF, spark))
-          record
-        })
-        .writeStream
-        .outputMode("append")
-        .format("console")
-        .option("truncate", false)
-        .start()
-    test.awaitTermination()*/
     query.awaitTermination()
-    windows.awaitTermination()
+    windowedData.awaitTermination()
     saveToInflux.awaitTermination()
     //Timestamp the data
 

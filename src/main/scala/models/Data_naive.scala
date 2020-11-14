@@ -2,7 +2,7 @@ package models
 
 import scala.collection.mutable.ListBuffer
 
-class Data_naive(c_point: Data_basis) extends Data_basis(c_point.dataframe, c_point.flag) {
+class Data_naive(c_point: Data_basis) extends Data_basis(c_point.id, c_point.value, c_point.arrival, c_point.flag) {
 
   //Neighbor data
   var count_after: Int = 0
@@ -30,7 +30,7 @@ class Data_naive(c_point: Data_basis) extends Data_basis(c_point.dataframe, c_po
   }
 
   //Clear variables
-   def clear(newMc: Int): Unit = {
+  def clear(newMc: Int): Unit = {
     nn_before.clear()
     count_after = 0
   }
