@@ -3,9 +3,10 @@ package utils
 import java.lang
 
 import models.{Data_advanced, Data_naive}
+import org.apache.spark.sql.{Dataset, SparkSession}
 import utils.Helpers._
-import scala.collection.JavaConverters._
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
@@ -16,5 +17,144 @@ object Utils {
   case class Metadata_naive(var outliers: mutable.HashMap[Int, Data_naive])
 
   case class Metadata_advanced(var outliers: mutable.HashMap[Int, Data_advanced])
+
+  class GroupMetadataNaive(c_query: Query) {
+
+    val query: Query = c_query
+    val W: Int = query.W
+    val slide: Int = query.S
+    val R: Double = query.R
+    val k: Int = query.k
+
+    def process(elements: scala.Iterable[Data_naive], windowEnd: Long, spark: SparkSession): Unit = {
+      val window = windowEnd
+      var newMap = mutable.HashMap[Int, Data_naive]()
+      //all elements are new to the window so we have to combine the same ones
+      //and add them to the map
+      for (el <- elements) {
+        val oldEl: Data_naive = newMap.getOrElse(el.id, null)
+        if (oldEl == null) {
+          newMap += ((el.id, el))
+        } else {
+          val newValue = combine_elements(oldEl, el, k)
+          newMap += ((el.id, newValue))
+        }
+      }
+      var current = Metadata_naive(newMap)
+      if (current == null) { //populate list for the first time
+        var newMap = mutable.HashMap[Int, Data_naive]()
+        //all elements are new to the window so we have to combine the same ones
+        //and add them to the map
+        for (el <- elements) {
+          val oldEl: Data_naive = newMap.getOrElse(el.id, null)
+          if (oldEl == null) {
+            newMap += ((el.id, el))
+          } else {
+            val newValue = combine_elements(oldEl, el, k)
+            newMap += ((el.id, newValue))
+          }
+        }
+        current = Metadata_naive(newMap)
+      } else { //update list
+        //first remove old elements and elements that are safe inliers
+        var forRemoval = ListBuffer[Int]()
+        for (el <- current.outliers.values) {
+          if (elements.count(_.id == el.id) == 0) {
+            forRemoval = forRemoval.+=(el.id)
+          }
+        }
+        forRemoval.foreach(el => current.outliers -= el)
+        //then insert or combine elements
+        for (el <- elements) {
+          val oldEl = current.outliers.getOrElse(el.id, null)
+          if (oldEl == null) {
+            current.outliers.+=((el.id, el))
+          } else {
+            if (el.arrival < window - slide) {
+              oldEl.count_after = el.count_after
+              current.outliers += ((el.id, oldEl))
+            } else {
+              val newValue = combine_elements(oldEl, el, k)
+              current.outliers += ((el.id, newValue))
+            }
+          }
+        }
+      }
+
+      var outliers = 0
+      for (el <- current.outliers.values) {
+        val nnBefore = el.nn_before.count(_ >= window - W)
+        if (nnBefore + el.count_after < k) outliers += 1
+      }
+      println(outliers)
+      val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+    }
+  }
+
+  class GroupMetadataAdvanced(c_query: Query) {
+
+    val query: Query = c_query
+    val W: Int = query.W
+    val slide: Int = query.S
+    val R: Double = query.R
+    val k: Int = query.k
+
+    def process(elements: scala.Iterable[Data_advanced], windowEnd: Long, spark: SparkSession): Unit = {
+      val window = windowEnd
+      var newMap = mutable.HashMap[Int, Data_advanced]()
+      //all elements are new to the window so we have to combine the same ones
+      //and add them to the map
+      for (el <- elements) {
+        val oldEl = newMap.getOrElse(el.id, null)
+        val newValue = combine_new_elements(oldEl, el, k)
+        newMap += ((el.id, newValue))
+      }
+      var current = Metadata_advanced(newMap)
+      if (current == null) { //populate list for the first time
+        var newMap = mutable.HashMap[Int, Data_advanced]()
+        //all elements are new to the window so we have to combine the same ones
+        //and add them to the map
+        for (el <- elements) {
+          val oldEl = newMap.getOrElse(el.id, null)
+          val newValue = combine_new_elements(oldEl, el, k)
+          newMap += ((el.id, newValue))
+        }
+        current = Metadata_advanced(newMap)
+      } else { //update list
+
+        //first remove old elements
+        var forRemoval = ListBuffer[Int]()
+        for (el <- current.outliers.values) {
+          if (el.arrival < window - W) {
+            forRemoval = forRemoval.+=(el.id)
+          }
+        }
+        forRemoval.foreach(el => current.outliers -= el)
+        //then insert or combine elements
+        for (el <- elements) {
+          val oldEl = current.outliers.getOrElse(el.id, null)
+          if (el.arrival >= window - slide) {
+            val newValue = combine_new_elements(oldEl, el, k)
+            current.outliers += ((el.id, newValue))
+          } else {
+            if (oldEl != null) {
+              val newValue = combine_old_elements(oldEl, el, k)
+              current.outliers += ((el.id, newValue))
+            }
+          }
+        }
+      }
+
+      var outliers = 0
+      for (el <- current.outliers.values) {
+        if (!el.safe_inlier) {
+          val nnBefore = el.nn_before.count(_ >= window - W)
+          if (nnBefore + el.count_after < k) outliers += 1
+        }
+      }
+      val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+      println(outliers)
+    }
+  }
 
 }

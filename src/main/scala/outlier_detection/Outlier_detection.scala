@@ -7,7 +7,7 @@ import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWrit
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.spark.structured.streaming._
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
-import models.{Data_basis, Data_naive}
+import models.{Data_advanced, Data_basis, Data_naive}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.functions.{col, collect_set, window}
 import org.apache.spark.sql.streaming.Trigger
@@ -19,7 +19,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
 import utils.Helpers.find_gcd
-import utils.Utils.Query
+import utils.Utils.{GroupMetadataAdvanced, GroupMetadataNaive, Query}
 import partitioning.Replication.replication_partitioning
 import partitioning.Grid.grid_partitioning
 
@@ -297,7 +297,27 @@ object Outlier_detection {
           }
 
           val naiveQ = new single_query.Naive(myQueries.head)
-          naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
+          val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
+          val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
+          groupMetadataNaiveQ.process(groupMetadataNaive,5,spark)
+          val advancedQ = new single_query.Advanced(myQueries.head)
+          val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+          val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
+          groupMetadataAdvancedQ.process(groupMetadataAdvanced,5,spark)
+        /*          val output_data = arguments.space match {
+                    case "single" =>
+                      arguments.algorithm match {
+                        case "naive" =>
+                          val naiveQ = new single_query.Naive(myQueries.head)
+                          val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
+                          val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
+                          groupMetadataNaiveQ.process(groupMetadataNaive,5,spark)
+                        case "advanced" =>
+                          val advancedQ = new single_query.Advanced(myQueries.head)
+                          val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+                          val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
+                          groupMetadataAdvancedQ.process(groupMetadataAdvanced,5,spark)
+                          */
       }
       .start()
 
