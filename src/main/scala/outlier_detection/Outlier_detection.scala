@@ -7,7 +7,7 @@ import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWrit
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.spark.structured.streaming._
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
-import models.{Data_advanced, Data_basis, Data_naive}
+import models.{Data_advanced, Data_basis, Data_mcod, Data_naive, Data_slicing}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.functions.{col, collect_set, window}
 import org.apache.spark.sql.streaming.Trigger
@@ -22,6 +22,7 @@ import utils.Helpers.find_gcd
 import utils.Utils.{GroupMetadataAdvanced, GroupMetadataNaive, Query}
 import partitioning.Replication.replication_partitioning
 import partitioning.Grid.grid_partitioning
+import single_query.Slicing
 
 import scala.collection.mutable.ListBuffer
 
@@ -300,10 +301,19 @@ object Outlier_detection {
           val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
           val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
           groupMetadataNaiveQ.process(groupMetadataNaive,5,spark)
-          val advancedQ = new single_query.Advanced(myQueries.head)
+          /*val advancedQ = new single_query.Advanced(myQueries.head)
           val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
           val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
-          groupMetadataAdvancedQ.process(groupMetadataAdvanced,5,spark)
+          groupMetadataAdvancedQ.process(groupMetadataAdvanced,5,spark)*/
+          val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
+          val groupMetadataAdvancedExt = advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+          val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
+          val slicingQ = new single_query.Slicing(myQueries.head)
+          val groupMetadataSlicing = slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), 5, spark)
+          val pmcodQ = new single_query.Pmcod(myQueries.head)
+          pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
+          val pmcodNetQ = new single_query.Pmcod(myQueries.head)
+          pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
         /*          val output_data = arguments.space match {
                     case "single" =>
                       arguments.algorithm match {
@@ -317,6 +327,19 @@ object Outlier_detection {
                           val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
                           val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
                           groupMetadataAdvancedQ.process(groupMetadataAdvanced,5,spark)
+                        case "advanced_extended" =>
+                          val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
+                          val groupMetadataAdvancedExt = advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+                          val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
+                        case "slicing" =>
+                          val slicingQ = new Slicing(myQueries.head)
+                          slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing()(record._2))), 5, spark)
+                        case "pmcod" =>
+                          val pmcodQ = new single_query.Pmcod(myQueries.head)
+                          pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
+                        case "pmcod_net" =>
+                          val pmcodNetQ = new single_query.Pmcod(myQueries.head)
+                          pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
                           */
       }
       .start()
