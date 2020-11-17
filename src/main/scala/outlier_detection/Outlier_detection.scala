@@ -271,11 +271,17 @@ object Outlier_detection {
       .trigger(Trigger.ProcessingTime(10))
       .foreachBatch {
         (batchDs: Dataset[Row], batchId: Long) =>
+          var windowStart: Long = 0;
+          var windowEnd: Long = 0;
           val data2 = batchDs
             .map((record) => {
-              val windowTimes = record.get(2).toString()
+              val arrival = record.get(2).toString()
+              val startingWindowStr = record.get(3).toString().split(",")(0).toString().replace("[","")
+              windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+              val endingWindowStr = record.get(3).toString().split(",")(1).toString().replace("]","")
+              windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
               key += 1
-              val date = dateTimeStringToEpoch(windowTimes, "yyyy-MM-dd HH:mm:ss.SSS")
+              val date = dateTimeStringToEpoch(arrival, "yyyy-MM-dd HH:mm:ss.SSS")
               new Data_basis(key, ListBuffer(record.get(1).toString().split(",").map(_.toDouble): _ *), date, 0)
             })
 
@@ -302,53 +308,53 @@ object Outlier_detection {
               arguments.algorithm match {
                 case "naive" =>
                   val naiveQ = new single_query.Naive(myQueries.head)
-                  val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), 5, spark)
+                  val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), windowEnd, spark)
                   val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
-                  groupMetadataNaiveQ.process(groupMetadataNaive, 5, spark)
+                  groupMetadataNaiveQ.process(groupMetadataNaive, windowEnd, spark)
                 case "advanced" =>
                   val advancedQ = new single_query.Advanced(myQueries.head)
-                  val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+                  val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
                   val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
-                  groupMetadataAdvancedQ.process(groupMetadataAdvanced, 5, spark)
+                  groupMetadataAdvancedQ.process(groupMetadataAdvanced, windowEnd, spark)
                 case "advanced_extended" =>
                   val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
-                  val groupMetadataAdvancedExt = advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), 5, spark)
+                  val groupMetadataAdvancedExt = advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
                   val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
                 case "slicing" =>
                   val slicingQ = new Slicing(myQueries.head)
-                  slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), 5, spark)
+                  slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), windowEnd, spark, windowStart)
                 case "pmcod" =>
                   val pmcodQ = new single_query.Pmcod(myQueries.head)
-                  pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
+                  pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
                 case "pmcod_net" =>
-                  val pmcodNetQ = new single_query.Pmcod(myQueries.head)
-                  pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), 5, spark)
+                  val pmcodNetQ = new single_query.Pmcod_net(myQueries.head)
+                  pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
                 case "rk" =>
                   arguments.algorithm match {
                     case "amcod" =>
                       val amcodQ = new rk_query.Amcod(myQueries)
-                      amcodQ.process(partitioned_data.map(record => (record._1, new Data_amcod(record._2))), 5, spark)
+                      amcodQ.process(partitioned_data.map(record => (record._1, new Data_amcod(record._2))), windowEnd, spark, windowStart)
                     case "sop" =>
                       val sopQ = new rk_query.Sop(myQueries)
-                      sopQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), 5, spark)
+                      sopQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
                     case "psod" =>
                       val psodQ = new rk_query.Psod(myQueries)
-                      psodQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), 5, spark)
+                      psodQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
                     case "pmcsky" =>
                       val pmcskyQ = new rk_query.PmcSky(myQueries)
-                      pmcskyQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), 5, spark)
+                      pmcskyQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
                   }
                 case "rkws" =>
                   arguments.algorithm match {
                     case "sop" =>
                       val sopRKWSQ = new rkws_query.Sop(myQueries, common_S)
-                      sopRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), 5, spark)
+                      sopRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
                     case "psod" =>
                       val psodRKWSQ = new rkws_query.Psod(myQueries, common_S)
-                      psodRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), 5, spark)
+                      psodRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
                     case "pmcsky" =>
                       val pmcskyRKWSQ = new rkws_query.PmcSky(myQueries, common_S)
-                      pmcskyRKWSQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), 5, spark)
+                      pmcskyRKWSQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
                   }
               }
           }

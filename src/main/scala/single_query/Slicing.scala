@@ -21,16 +21,15 @@ class Slicing(c_query: Query) {
   val k: Int = query.k
   val outliers_trigger: Long = -1L
 
-  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession):scala.Iterable[Data_slicing] = {
+  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession, windowStart: Long):scala.Iterable[Data_slicing] = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val inputList = elements.rdd.collect().toList.toIterable
     //new variables
-    val latest_slide = window - slide
+    val latest_slide = windowEnd - slide
     val nonRandomPromotion = new PromotionFunction[Data_slicing] {
       /**
         * Chooses (promotes) a pair of objects according to some criteria that is
@@ -50,8 +49,8 @@ class Slicing(c_query: Query) {
 
     var myTrigger = mutable.HashMap[Long, mutable.Set[Int]]()
     myTrigger.+=((outliers_trigger, mutable.Set()))
-    var next_slide = window
-    while(next_slide <= window - slide){
+    var next_slide = windowStart
+    while(next_slide <= windowEnd - slide){
       myTrigger.+=((next_slide, mutable.Set()))
       next_slide += slide
     }
@@ -65,8 +64,8 @@ class Slicing(c_query: Query) {
     if (current == null) {
       var myTrigger = mutable.HashMap[Long, mutable.Set[Int]]()
       myTrigger.+=((outliers_trigger, mutable.Set()))
-      var next_slide = window
-      while(next_slide <= window - slide){
+      var next_slide = windowStart
+      while(next_slide <= windowEnd - slide){
         myTrigger.+=((next_slide, mutable.Set()))
         next_slide += slide
       }
@@ -77,12 +76,12 @@ class Slicing(c_query: Query) {
       current = SlicingState(myTrees, myTrigger)
     } else {
       inputList
-        .filter(el => el._2.arrival >= window - slide)
+        .filter(el => el._2.arrival >= windowEnd - slide)
         .foreach(el => {
           myTree.add(el._2)
         })
       var max = current.triggers.keySet.max + slide
-      while (max <= window - slide){
+      while (max <= windowEnd - slide){
         current.triggers.+=((max, mutable.Set[Int]()))
         max += slide
       }
@@ -90,20 +89,20 @@ class Slicing(c_query: Query) {
     }
 
     //Trigger leftover slides
-    val slow_triggers = current.triggers.keySet.filter(p => p < window && p!= -1L).toList
+    val slow_triggers = current.triggers.keySet.filter(p => p < windowStart && p!= -1L).toList
     for(slow <- slow_triggers){
       val slow_triggers_points = current.triggers(slow).toList
       inputList
         .filter(p => slow_triggers_points.contains(p._2.id))
-        .foreach(p =>trigger_point(p._2, window, current))
+        .foreach(p =>trigger_point(p._2, windowEnd, current, windowStart))
       current.triggers.remove(slow)
     }
 
     //Insert new points
     inputList
-      .filter(p => p._2.arrival >= window - slide && p._2.flag == 0)
+      .filter(p => p._2.arrival >= windowEnd - slide && p._2.flag == 0)
       .foreach(p => {
-        insert_point(p._2, window, current)
+        insert_point(p._2, windowEnd, current, windowStart)
       })
 
     //Trigger previous outliers
@@ -111,25 +110,25 @@ class Slicing(c_query: Query) {
     current.triggers(outliers_trigger).clear()
     inputList
       .filter(p => triggered_outliers.contains(p._2.id))
-      .foreach(p =>trigger_point(p._2, window, current))
+      .foreach(p =>trigger_point(p._2, windowEnd, current, windowStart))
 
     //Report outliers
     val outliers = inputList.count(p => {
       p._2.flag == 0 &&
         !p._2.safe_inlier &&
-        p._2.count_after + p._2.slices_before.filter(_._1 >= window).values.sum < k
+        p._2.count_after + p._2.slices_before.filter(_._1 >= windowStart).values.sum < k
     })
 
     val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
 
     var iter = ListBuffer[Data_slicing]();
     //Trigger expiring list
-    current.trees.remove(window)
-    val triggered: List[Int] = current.triggers(window).toList
-    current.triggers.remove(window)
+    current.trees.remove(windowStart)
+    val triggered: List[Int] = current.triggers(windowStart).toList
+    current.triggers.remove(windowStart)
     inputList
       .filter(p => triggered.contains(p._2.id))
-      .foreach(p =>trigger_point(p._2, window, current))
+      .foreach(p =>trigger_point(p._2, windowStart, current, windowEnd))
 
     //Metrics
     val time_final = System.currentTimeMillis()
@@ -138,14 +137,14 @@ class Slicing(c_query: Query) {
     return iter.toIterable
   }
 
-  def trigger_point(point: Data_slicing, window: Long, current: SlicingState): Unit = {
+  def trigger_point(point: Data_slicing, windowEnd: Long, current: SlicingState, windowStart: Long): Unit = {
     var next_slide = //find starting slide
       if (point.last_check != 0L) point.last_check + slide
-      else get_slide(point.arrival, window) + slide
+      else get_slide(point.arrival, windowStart) + slide
     //Find no of neighbors
     var neigh_counter = point.count_after +
-      point.slices_before.filter(_._1 >= window + slide).values.sum
-    while (neigh_counter < k && next_slide <= window - slide) {
+      point.slices_before.filter(_._1 >= windowStart + slide).values.sum
+    while (neigh_counter < k && next_slide <= windowEnd - slide) {
       val myTree = current.trees.getOrElse(next_slide, null)
       if (myTree != null) {
         val query: MTree[Data_slicing]#Query = myTree.getNearestByRange(point, R)
@@ -167,9 +166,9 @@ class Slicing(c_query: Query) {
     }
   }
 
-  def insert_point(point: Data_slicing, window: Long, current: SlicingState): Unit = {
-    var (neigh_counter, next_slide) = (0, window - slide)
-    while (neigh_counter < k && next_slide >= window) { //Query each slide's MTREE
+  def insert_point(point: Data_slicing, windowEnd: Long, current: SlicingState, windowStart: Long): Unit = {
+    var (neigh_counter, next_slide) = (0, windowEnd - slide)
+    while (neigh_counter < k && next_slide >= windowStart) { //Query each slide's MTREE
       val myTree = current.trees.getOrElse(next_slide, null)
       if (myTree != null) {
         val query: MTree[Data_slicing]#Query = myTree.getNearestByRange(point, R)
@@ -180,7 +179,7 @@ class Slicing(c_query: Query) {
         //Update point's metadata
         while (iter.hasNext) {
           val node = iter.next().data
-          if (next_slide == window - slide) {
+          if (next_slide == windowEnd - slide) {
             if (node.id != point.id) {
               point.count_after += 1
               neigh_counter += 1
@@ -190,7 +189,7 @@ class Slicing(c_query: Query) {
             neigh_counter += 1
           }
         }
-        if (next_slide == window - slide && neigh_counter >= k) point.safe_inlier = true
+        if (next_slide == windowEnd - slide && neigh_counter >= k) point.safe_inlier = true
       }
       next_slide -= slide
     }
@@ -198,11 +197,11 @@ class Slicing(c_query: Query) {
     if (neigh_counter < k) current.triggers(outliers_trigger).+=(point.id)
   }
 
-  def get_slide(arrival: Long, window: Long): Long = {
-    val first = arrival - window
+  def get_slide(arrival: Long, windowStart: Long): Long = {
+    val first = arrival - windowStart
     val div = first / slide
     val int_div = div.toInt
-    window + (int_div * slide)
+    windowStart + (int_div * slide)
   }
 }
 

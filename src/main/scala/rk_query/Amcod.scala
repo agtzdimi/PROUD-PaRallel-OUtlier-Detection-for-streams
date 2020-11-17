@@ -31,13 +31,12 @@ class Amcod(c_queries: ListBuffer[Query]) {
 
   var mc_counter = 1
 
-  def process(elements: Dataset[(Int, Data_amcod)], windowEnd: Long, spark: SparkSession):Unit = {
+  def process(elements: Dataset[(Int, Data_amcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Unit = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val inputList = elements.rdd.collect().toList.toIterable
 
     //create state
@@ -49,7 +48,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
 
     //insert new elements
     inputList
-      .filter(_._2.arrival >= window - slide)
+      .filter(_._2.arrival >= windowEnd - slide)
       .foreach(p => insertPoint(p._2, true, null, current))
 
     //Find outliers
@@ -61,7 +60,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
         }
         else {
           var i, y: Int = 0
-          var b_count = p.nn_before_set.count(p => p._1 >= window && p._2 <= R_distinct_list(i))
+          var b_count = p.nn_before_set.count(p => p._1 >= windowStart && p._2 <= R_distinct_list(i))
           var a_count = p.count_after_set.count(_ <= R_distinct_list(i))
           var count = b_count + a_count
           do {
@@ -73,7 +72,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
               }
               i += 1
               if (i < R_size) {
-                b_count = p.nn_before_set.count(p => p._1 >= window && p._2 <= R_distinct_list(i))
+                b_count = p.nn_before_set.count(p => p._1 >= windowStart && p._2 <= R_distinct_list(i))
                 a_count = p.count_after_set.count(_ <= R_distinct_list(i))
                 count = b_count + a_count
               }
@@ -92,7 +91,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
     //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
     inputList
-      .filter(p => p._2.arrival < window + slide)
+      .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         val delete = deletePoint(p._2, current)
         if (delete > 0) deletedMCs += delete

@@ -27,13 +27,12 @@ class Psod(c_queries: ListBuffer[Query]) {
   val k_size = k_distinct_list.size
   val R_size = R_distinct_list.size
 
-  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession): Unit = {
+  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val inputList = elements.rdd.collect().toList.toIterable
 
     //Create state
@@ -44,11 +43,11 @@ class Psod(c_queries: ListBuffer[Query]) {
 
     //Remove old points from each lSky
     current.index.values.foreach(p => {
-      p.lSky.keySet.foreach(l => p.lSky.update(l, p.lSky(l).filter(_._2 >= window)))
+      p.lSky.keySet.foreach(l => p.lSky.update(l, p.lSky(l).filter(_._2 >= windowStart)))
     })
     //Insert new elements to state
     inputList
-      .filter(_._2.arrival >= window - slide)
+      .filter(_._2.arrival >= windowEnd - slide)
       .foreach(p => {
         insertPoint(p._2, current)
       })
@@ -83,7 +82,7 @@ class Psod(c_queries: ListBuffer[Query]) {
 
     //Remove old points
     inputList
-      .filter(p => p._2.arrival < window + slide)
+      .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         deletePoint(p._2, current)
       })

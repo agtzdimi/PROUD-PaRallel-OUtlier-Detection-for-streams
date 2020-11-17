@@ -19,11 +19,10 @@ class Naive(c_query: Query) {
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
-    val window = windowEnd
     val inputList = elements.rdd.map(_._2).collect().toList
 
-    inputList.filter(_.arrival >= window - slide).foreach(p => {
-      refreshList(p, inputList, window)
+    inputList.filter(_.arrival >= windowEnd - slide).foreach(p => {
+      refreshList(p, inputList, windowEnd)
     })
     var iter = ListBuffer[Data_naive]();
 
@@ -42,7 +41,7 @@ class Naive(c_query: Query) {
     return iter.toIterable
   }
 
-  def refreshList(node: Data_naive, nodes: List[Data_naive], window: Long): Unit = {
+  def refreshList(node: Data_naive, nodes: List[Data_naive], windowEnd: Long): Unit = {
     if (nodes.nonEmpty) {
       val neighbors = nodes
         .filter(_.id != node.id)
@@ -51,7 +50,7 @@ class Naive(c_query: Query) {
 
       neighbors
         .foreach(x => {
-          if (x.arrival < window - slide) {
+          if (x.arrival < windowEnd - slide) {
             node.insert_nn_before(x.arrival, k)
           } else {
             node.count_after += 1
@@ -62,7 +61,7 @@ class Naive(c_query: Query) {
         })
 
       nodes
-        .filter(x => x.arrival < window - slide && neighbors.contains(x))
+        .filter(x => x.arrival < windowEnd - slide && neighbors.contains(x))
         .foreach(n => {
           n.count_after += 1
           if (n.count_after >= k) {

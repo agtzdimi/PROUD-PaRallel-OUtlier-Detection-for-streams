@@ -27,7 +27,6 @@ object Utils {
     val k: Int = query.k
 
     def process(elements: scala.Iterable[Data_naive], windowEnd: Long, spark: SparkSession): Unit = {
-      val window = windowEnd
       var newMap = mutable.HashMap[Int, Data_naive]()
       //all elements are new to the window so we have to combine the same ones
       //and add them to the map
@@ -70,7 +69,7 @@ object Utils {
           if (oldEl == null) {
             current.outliers.+=((el.id, el))
           } else {
-            if (el.arrival < window - slide) {
+            if (el.arrival < windowEnd - slide) {
               oldEl.count_after = el.count_after
               current.outliers += ((el.id, oldEl))
             } else {
@@ -83,7 +82,7 @@ object Utils {
 
       var outliers = 0
       for (el <- current.outliers.values) {
-        val nnBefore = el.nn_before.count(_ >= window - W)
+        val nnBefore = el.nn_before.count(_ >= windowEnd - W)
         if (nnBefore + el.count_after < k) outliers += 1
       }
       println(outliers)
@@ -100,7 +99,6 @@ object Utils {
     val k: Int = query.k
 
     def process(elements: scala.Iterable[Data_advanced], windowEnd: Long, spark: SparkSession): Unit = {
-      val window = windowEnd
       var newMap = mutable.HashMap[Int, Data_advanced]()
       //all elements are new to the window so we have to combine the same ones
       //and add them to the map
@@ -125,7 +123,7 @@ object Utils {
         //first remove old elements
         var forRemoval = ListBuffer[Int]()
         for (el <- current.outliers.values) {
-          if (el.arrival < window - W) {
+          if (el.arrival < windowEnd - W) {
             forRemoval = forRemoval.+=(el.id)
           }
         }
@@ -133,7 +131,7 @@ object Utils {
         //then insert or combine elements
         for (el <- elements) {
           val oldEl = current.outliers.getOrElse(el.id, null)
-          if (el.arrival >= window - slide) {
+          if (el.arrival >= windowEnd - slide) {
             val newValue = combine_new_elements(oldEl, el, k)
             current.outliers += ((el.id, newValue))
           } else {
@@ -148,7 +146,7 @@ object Utils {
       var outliers = 0
       for (el <- current.outliers.values) {
         if (!el.safe_inlier) {
-          val nnBefore = el.nn_before.count(_ >= window - W)
+          val nnBefore = el.nn_before.count(_ >= windowEnd - W)
           if (nnBefore + el.count_after < k) outliers += 1
         }
       }

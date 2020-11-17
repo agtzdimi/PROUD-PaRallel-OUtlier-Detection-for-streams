@@ -32,17 +32,16 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
   val S_report_times = S_distinct_list.map(p => p / slide).sorted
   val S_max_report = S_report_times.max
 
-  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession): Unit = {
+  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val inputList = elements.rdd.collect().toList.toIterable
     //Create state
     val index = mutable.LinkedHashMap[Int, Data_lsky]()
-    val cur_slide: Long =  window / slide
+    val cur_slide: Long =  windowEnd / slide
     val current = SopState(index, cur_slide)
 
     var output_slide = ListBuffer[Int]()
@@ -54,7 +53,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
 
     //Insert new elements to state
     inputList
-      .filter(_._2.arrival >= window - slide)
+      .filter(_._2.arrival >= windowEnd - slide)
       //Sort is needed when each point has a different timestamp
       //In our case every point in the same slide has the same timestamp
       .toList
@@ -65,15 +64,15 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
     inputList
       .foreach(p => {
         if (!p._2.safe_inlier && p._2.flag == 0) {
-          checkPoint(p._2, window, current)
+          checkPoint(p._2, windowEnd, current, windowStart)
           if (p._2.lSky.getOrElse(1, ListBuffer()).count(_._2 >= p._2.arrival) >= k_max) p._2.safe_inlier = true
           else {
             if (output_slide.nonEmpty) {
               var w: Int = 0
               do {
-                if (p._2.arrival >= window - W_distinct_list(w)) {
+                if (p._2.arrival >= windowEnd - W_distinct_list(w)) {
                   var i, y: Int = 0
-                  var count = p._2.lSky.getOrElse(i + 1, ListBuffer()).count(_._2 >= window - W_distinct_list(w))
+                  var count = p._2.lSky.getOrElse(i + 1, ListBuffer()).count(_._2 >= windowEnd - W_distinct_list(w))
                   do {
                     if (count >= k_distinct_list(y)) { //inlier for all i
                       y += 1
@@ -82,7 +81,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
                         all_queries(i)(z)(w) += 1
                       }
                       i += 1
-                      count += p._2.lSky.getOrElse(i + 1, ListBuffer()).count(_._2 >= window - W_distinct_list(w))
+                      count += p._2.lSky.getOrElse(i + 1, ListBuffer()).count(_._2 >= windowEnd - W_distinct_list(w))
                     }
                   } while (i < R_size && y < k_size)
                 }
@@ -109,7 +108,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
 
     //Remove old points
     inputList
-      .filter(p => p._2.arrival < window + slide)
+      .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         deletePoint(p._2, current)
       })
@@ -119,11 +118,11 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
     cpu_time += (time_final - time_init)
   }
 
-  def checkPoint(el: Data_lsky, window: Long, current: SopState): Unit = {
+  def checkPoint(el: Data_lsky, windowEnd: Long, current: SopState, windowStart: Long): Unit = {
     if (el.lSky.isEmpty) { //It's a new point!
       insertPoint(el, current)
     } else { //It's an old point
-      updatePoint(el, window, current)
+      updatePoint(el, windowEnd, current, windowStart)
     }
   }
 
@@ -144,9 +143,9 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
       })
   }
 
-  def updatePoint(el: Data_lsky, window: Long, current: SopState): Unit = {
+  def updatePoint(el: Data_lsky, windowEnd: Long, current: SopState, windowStart: Long): Unit = {
     //Remove old points from lSky
-    el.lSky.keySet.foreach(p => el.lSky.update(p, el.lSky(p).filter(_._2 >= window)))
+    el.lSky.keySet.foreach(p => el.lSky.update(p, el.lSky(p).filter(_._2 >= windowStart)))
     //Create input
     val old_sky = el.lSky.values.flatten.toList.sortWith((p1, p2) => p1._2 > p2._2).map(_._1)
     el.lSky.clear()
@@ -155,7 +154,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
     current.index.values.toList.reverse
       .takeWhile(p => {
         var tmpRes = true
-        if (p.arrival >= window - slide) {
+        if (p.arrival >= windowEnd - slide) {
           val thisDistance = distance(el.value.toArray, p.value.toArray)
           if (thisDistance <= R_max) {
             val skyRes = neighborSkyband(el, p, thisDistance)

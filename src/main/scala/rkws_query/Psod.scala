@@ -39,17 +39,15 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
   }).distinct.sorted
   val S_var_max = S_var.max
 
-  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession): Unit = {
+  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
-
     //Create state
     val index = mutable.LinkedHashMap[Int, Data_lsky]()
-    val cur_slide: Long =  window / slide
+    val cur_slide: Long =  windowEnd / slide
     val inputList = elements.rdd.collect().toList.toIterable
     val current = PsodState(index, cur_slide)
 
@@ -57,11 +55,11 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
 
     //Remove old points from each lSky
     current.index.values.foreach(p => {
-      p.lSky.keySet.foreach(l => p.lSky.update(l, p.lSky(l).filter(_._2 >= window)))
+      p.lSky.keySet.foreach(l => p.lSky.update(l, p.lSky(l).filter(_._2 >= windowStart)))
     })
     //Insert new elements to state
     inputList
-      .filter(_._2.arrival >= window - slide)
+      .filter(_._2.arrival >= windowEnd - slide)
       .foreach(p => {
         insertPoint(p._2, current)
       })
@@ -74,9 +72,9 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
           if (S_var.contains(current.slide_count)) {
             var w: Int = 0
             do {
-              if (p._2.arrival >= window - W_distinct_list(w)) {
+              if (p._2.arrival >= windowEnd - W_distinct_list(w)) {
                 var i, y: Int = 0
-                var count = p._2.lSky.getOrElse(i, ListBuffer()).count(_._2 >= window - W_distinct_list(w))
+                var count = p._2.lSky.getOrElse(i, ListBuffer()).count(_._2 >= windowEnd - W_distinct_list(w))
                 do {
                   if (count >= k_distinct_list(y)) { //inlier for all i
                     y += 1
@@ -85,7 +83,7 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
                       all_queries(i)(z)(w) += 1
                     }
                     i += 1
-                    count += p._2.lSky.getOrElse(i, ListBuffer()).count(_._2 >= window - W_distinct_list(w))
+                    count += p._2.lSky.getOrElse(i, ListBuffer()).count(_._2 >= windowEnd - W_distinct_list(w))
                   }
                 } while (i < R_size && y < k_size)
               }
@@ -114,7 +112,7 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
 
     //Remove old points
     inputList
-      .filter(p => p._2.arrival < window + slide)
+      .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         deletePoint(p._2, current)
       })

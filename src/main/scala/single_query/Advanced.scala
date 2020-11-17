@@ -19,13 +19,12 @@ class Advanced(c_query: Query) {
   val R: Double = c_query.R
   val k: Int = c_query.k
 
-  def process(elements: Dataset[(Int, Data_advanced)], windowEnd: Long, spark: SparkSession):scala.Iterable[Data_advanced] = {
+  def process(elements: Dataset[(Int, Data_advanced)], windowEnd: Long, spark: SparkSession, windowStart: Long):scala.Iterable[Data_advanced] = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val nonRandomPromotion = new PromotionFunction[Data_advanced] {
       /**
         * Chooses (promotes) a pair of objects according to some criteria that is
@@ -75,7 +74,7 @@ class Advanced(c_query: Query) {
       current = AdvancedState(myTree, myHash)
     } else {
       inputList
-        .filter(el => el._2.arrival >= window - slide)
+        .filter(el => el._2.arrival >= windowEnd - slide)
         .foreach(el => {
           current.tree.add(el._2)
           current.hashMap.+=((el._2.id, el._2))
@@ -84,7 +83,7 @@ class Advanced(c_query: Query) {
 
     //Get neighbors
     inputList
-      .filter(p => p._2.arrival >= (window - slide))
+      .filter(p => p._2.arrival >= (windowEnd - slide))
       .foreach(p => {
         val tmpData = p._2
         val query: MTree[Data_advanced]#Query = current.tree.getNearestByRange(tmpData, R)
@@ -92,7 +91,7 @@ class Advanced(c_query: Query) {
         while (iter.hasNext) {
           val node = iter.next().data
           if (node.id != tmpData.id) {
-            if (node.arrival < (window - slide)) {
+            if (node.arrival < (windowEnd - slide)) {
               current.hashMap(tmpData.id).insert_nn_before(node.arrival, k)
               current.hashMap(node.id).count_after += 1
               if (current.hashMap(node.id).count_after >= k)
@@ -115,7 +114,7 @@ class Advanced(c_query: Query) {
 
     //Remove expiring objects from tree and flagged ones
     inputList
-      .filter(el => el._2.arrival < window + slide || el._2.flag == 1)
+      .filter(el => el._2.arrival < windowStart + slide || el._2.flag == 1)
       .foreach(el => {
         current.tree.remove(el._2)
         current.hashMap.-=(el._2.id)

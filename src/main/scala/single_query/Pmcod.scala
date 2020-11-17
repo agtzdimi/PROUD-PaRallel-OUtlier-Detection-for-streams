@@ -22,13 +22,12 @@ class Pmcod(c_query: Query) {
   val k: Int = query.k
   var mc_counter: Int = 1
 
-  def process(elements: Dataset[(Int, Data_mcod)], windowEnd: Long, spark: SparkSession):Unit = {
+  def process(elements: Dataset[(Int, Data_mcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Unit = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val window = windowEnd
     val inputList = elements.rdd.collect().toList.toIterable
     //create state
     val PD = mutable.HashMap[Int, Data_mcod]()
@@ -37,14 +36,14 @@ class Pmcod(c_query: Query) {
 
     //insert new elements
     inputList
-      .filter(_._2.arrival >= window - slide)
+      .filter(_._2.arrival >= windowEnd - slide)
       .foreach(p => insertPoint(p._2, true,null, current))
 
     //Find outliers
     var outliers = 0
     current.PD.values.foreach(p => {
       if (!p.safe_inlier && p.flag == 0)
-        if (p.count_after + p.nn_before.count(_ >= window) < k) {
+        if (p.count_after + p.nn_before.count(_ >= windowEnd) < k) {
           outliers += 1
         }
     })
@@ -54,7 +53,7 @@ class Pmcod(c_query: Query) {
     //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
     inputList
-      .filter(p => p._2.arrival < window + slide)
+      .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         val delete = deletePoint(p._2, current)
         if (delete > 0) deletedMCs += delete
