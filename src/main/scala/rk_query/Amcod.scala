@@ -31,7 +31,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
 
   var mc_counter = 1
 
-  def process(elements: Dataset[(Int, Data_amcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Unit = {
+  def process(elements: Dataset[(Int, Data_amcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
@@ -82,9 +82,10 @@ class Amcod(c_queries: ListBuffer[Query]) {
       }
     })
 
-    for (i <- 0 until R_size) {
-      for (y <- 0 until k_size) {
-        val tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),queries.head.W,queries.head.S,all_queries(i)(y))
+    var tmpQuery = Query(R_distinct_list(0),k_distinct_list(0),queries.head.W,queries.head.S,all_queries(0)(0))
+    for (i <- 1 until R_size) {
+      for (y <- 1 until k_size) {
+        tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),queries.head.W,queries.head.S,all_queries(i)(y))
       }
     }
 
@@ -113,6 +114,7 @@ class Amcod(c_queries: ListBuffer[Query]) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+    tmpQuery
   }
 
   def insertPoint(el: Data_amcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null, current: AmcodState): Unit = {

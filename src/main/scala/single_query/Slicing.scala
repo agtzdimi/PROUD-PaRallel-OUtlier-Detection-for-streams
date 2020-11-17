@@ -21,7 +21,7 @@ class Slicing(c_query: Query) {
   val k: Int = query.k
   val outliers_trigger: Long = -1L
 
-  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession, windowStart: Long):scala.Iterable[Data_slicing] = {
+  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
@@ -134,7 +134,7 @@ class Slicing(c_query: Query) {
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
 
-    return iter.toIterable
+    tmpQuery
   }
 
   def trigger_point(point: Data_slicing, windowEnd: Long, current: SlicingState, windowStart: Long): Unit = {

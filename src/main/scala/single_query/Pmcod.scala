@@ -22,7 +22,7 @@ class Pmcod(c_query: Query) {
   val k: Int = query.k
   var mc_counter: Int = 1
 
-  def process(elements: Dataset[(Int, Data_mcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Unit = {
+  def process(elements: Dataset[(Int, Data_mcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
@@ -75,6 +75,7 @@ class Pmcod(c_query: Query) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+    tmpQuery
   }
 
   def insertPoint(el: Data_mcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null, current: PmcodState): Unit = {

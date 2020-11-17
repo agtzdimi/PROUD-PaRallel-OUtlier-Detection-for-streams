@@ -32,7 +32,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
   val S_report_times = S_distinct_list.map(p => p / slide).sorted
   val S_max_report = S_report_times.max
 
-  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
+  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Query = {
 
     //Metrics
     counter += 1
@@ -92,13 +92,15 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
         }
       })
 
+    val slide_to_report = output_slide.map(_ * slide)
+    var tmpQuery = Query(R_distinct_list(0), k_distinct_list(0), W_distinct_list(0), slide_to_report.head, all_queries(0)(0)(0))
     if (output_slide.nonEmpty) {
       val slide_to_report = output_slide.map(_ * slide)
       for (i <- 0 until R_size) {
         for (y <- 0 until k_size) {
           for (z <- 0 until W_size) {
             slide_to_report.foreach(p => {
-              val tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),W_distinct_list(z), p,all_queries(i)(y)(z))
+              tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),W_distinct_list(z), p,all_queries(i)(y)(z))
             })
           }
         }
@@ -116,6 +118,7 @@ class Sop(c_queries: ListBuffer[Query], c_slide: Int) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+    tmpQuery
   }
 
   def checkPoint(el: Data_lsky, windowEnd: Long, current: SopState, windowStart: Long): Unit = {

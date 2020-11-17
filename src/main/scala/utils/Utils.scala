@@ -26,7 +26,7 @@ object Utils {
     val R: Double = query.R
     val k: Int = query.k
 
-    def process(elements: scala.Iterable[Data_naive], windowEnd: Long, spark: SparkSession): Unit = {
+    def process(elements: scala.Iterable[Data_naive], windowEnd: Long, spark: SparkSession): Query = {
       var newMap = mutable.HashMap[Int, Data_naive]()
       //all elements are new to the window so we have to combine the same ones
       //and add them to the map
@@ -85,8 +85,8 @@ object Utils {
         val nnBefore = el.nn_before.count(_ >= windowEnd - W)
         if (nnBefore + el.count_after < k) outliers += 1
       }
-      println(outliers)
       val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+      tmpQuery
     }
   }
 
@@ -98,7 +98,7 @@ object Utils {
     val R: Double = query.R
     val k: Int = query.k
 
-    def process(elements: scala.Iterable[Data_advanced], windowEnd: Long, spark: SparkSession): Unit = {
+    def process(elements: scala.Iterable[Data_advanced], windowEnd: Long, spark: SparkSession): Query = {
       var newMap = mutable.HashMap[Int, Data_advanced]()
       //all elements are new to the window so we have to combine the same ones
       //and add them to the map
@@ -151,7 +151,19 @@ object Utils {
         }
       }
       val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
-      println(outliers)
+      tmpQuery
+    }
+  }
+
+  class PrintOutliers {
+    def process(elements: scala.Iterable[(Long, Query)]): Unit = {
+      val group_outliers = elements
+        .map(record => ((record._2.W,record._2.S,record._2.R,record._2.k), record._2.outliers))
+        .foldLeft(Map[(Int,Int,Double,Int), Int]().withDefaultValue(0))((res, v) => {
+          val key = v._1
+          res + (key -> (res(key) + v._2))
+        })
+      group_outliers.foreach(record => println(s"${record._1};${record._2}"))
     }
   }
 

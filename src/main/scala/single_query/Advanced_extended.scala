@@ -20,7 +20,7 @@ class Advanced_extended(c_query: Query) {
   val R: Double = query.R
   val k: Int = query.k
 
-  def process(elements: Dataset[(Int, Data_advanced)], windowEnd: Long, spark: SparkSession, windowStart: Long):scala.Iterable[Data_advanced] = {
+  def process(elements: Dataset[(Int, Data_advanced)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
@@ -138,7 +138,7 @@ class Advanced_extended(c_query: Query) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
-    return iter.toIterable
+    tmpQuery
   }
 
 }

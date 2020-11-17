@@ -22,7 +22,7 @@ import partitioning.Tree.Tree_partitioning
 import scopt.OParser
 import single_query.Slicing
 import utils.Helpers.find_gcd
-import utils.Utils.{GroupMetadataAdvanced, GroupMetadataNaive, Query}
+import utils.Utils.{GroupMetadataAdvanced, GroupMetadataNaive, PrintOutliers, Query}
 
 import scala.collection.mutable.ListBuffer
 
@@ -258,6 +258,7 @@ object Outlier_detection {
     import spark.implicits._
 
     var key: Int = 0
+    var outliers = ListBuffer[(Long, Query)]()
     val windowedData = data
       .withColumn("timestamp", ($"timestamp").cast(TimestampType))
       .withWatermark("timestamp", s"$common_W seconds")
@@ -318,8 +319,7 @@ object Outlier_detection {
                   groupMetadataAdvancedQ.process(groupMetadataAdvanced, windowEnd, spark)
                 case "advanced_extended" =>
                   val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
-                  val groupMetadataAdvancedExt = advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
-                  val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
+                  advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
                 case "slicing" =>
                   val slicingQ = new Slicing(myQueries.head)
                   slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), windowEnd, spark, windowStart)
@@ -358,6 +358,11 @@ object Outlier_detection {
                   }
               }
           }
+          val keyValPair = (batchId, output_data)
+          outliers += keyValPair
+          val printOutliers = new PrintOutliers()
+          printOutliers.process(outliers.toIterable)
+
       }
       .start()
 

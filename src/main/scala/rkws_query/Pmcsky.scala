@@ -1,20 +1,18 @@
 package rkws_query
 
+import models.Data_mcsky
+import org.apache.spark.sql.{Dataset, SparkSession}
 import utils.Helpers.distance
 import utils.Utils.Query
-import models.{Data_mcod, Data_mcsky}
-import org.apache.spark.sql.{Dataset, SparkSession}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 case class PmcskyCluster(var center: ListBuffer[Double], var points: ListBuffer[Int])
+
 case class PmcskyState(var index: mutable.LinkedHashMap[Int, Data_mcsky], var MC: mutable.HashMap[Int, PmcskyCluster], var PD: mutable.HashSet[Int], var slide_count: Long, var cluster_id: Int)
 
 class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
-
-  @transient private var counter: Int = _
-  @transient private var cpu_time: Long = 0L
 
   val queries: ListBuffer[Query] = c_queries
   val slide: Int = c_slide
@@ -33,8 +31,10 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
   val S_size = S_distinct_list.size
   val S_report_times = S_distinct_list.map(p => p / slide).sorted
   val S_max_report = S_report_times.max
+  @transient private var counter: Int = _
+  @transient private var cpu_time: Long = 0L
 
-  def process(elements: Dataset[(Int, Data_mcsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
+  def process(elements: Dataset[(Int, Data_mcsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Query = {
 
     //Metrics
     counter += 1
@@ -45,7 +45,7 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
     val index = mutable.LinkedHashMap[Int, Data_mcsky]()
     val MC = mutable.HashMap[Int, PmcskyCluster]()
     val PD = mutable.HashSet[Int]()
-    val cur_slide: Long =  windowEnd / slide
+    val cur_slide: Long = windowEnd / slide
     val current = PmcskyState(index, MC, PD, cur_slide, 1)
 
     var output_slide = ListBuffer[Int]()
@@ -68,9 +68,9 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
     inputList.foreach(p => {
       if (!p._2.safe_inlier && p._2.flag == 0 && p._2.mc == -1) {
         checkPoint(p._2, windowEnd, current, windowStart)
-        if(p._2.mc == -1){
+        if (p._2.mc == -1) {
           if (p._2.lSky.getOrElse(1, ListBuffer()).count(_._2 >= p._2.arrival) >= k_max) p._2.safe_inlier = true
-          else{
+          else {
             if (output_slide.nonEmpty) {
               var w: Int = 0
               do {
@@ -97,13 +97,15 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
       }
     })
 
+    val slide_to_report = output_slide.map(_ * slide)
+    var tmpQuery = Query(R_distinct_list(0), k_distinct_list(0), W_distinct_list(0), slide_to_report.head, all_queries(0)(0)(0))
     if (output_slide.nonEmpty) {
       val slide_to_report = output_slide.map(_ * slide)
-      for (i <- 0 until R_size) {
-        for (y <- 0 until k_size) {
-          for (z <- 0 until W_size) {
+      for (i <- 1 until R_size) {
+        for (y <- 1 until k_size) {
+          for (z <- 1 until W_size) {
             slide_to_report.foreach(p => {
-              val tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),W_distinct_list(z), p,all_queries(i)(y)(z))
+              tmpQuery = Query(R_distinct_list(i), k_distinct_list(y), W_distinct_list(z), p, all_queries(i)(y)(z))
             })
           }
         }
@@ -115,7 +117,7 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
       .filter(p => p._2.arrival < windowEnd - W_min + slide)
       .foreach(p => {
         //Remove small window points from clusters
-        if(p._2.mc != -1 && p._2.arrival >= windowEnd - W_min)
+        if (p._2.mc != -1 && p._2.arrival >= windowEnd - W_min)
           deleteSmallWindowPoint(p._2, current)
         //Remove old points
         if (p._2.arrival < windowStart + slide)
@@ -125,6 +127,7 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+    tmpQuery
   }
 
   def checkPoint(el: Data_mcsky, windowEnd: Long, current: PmcskyState, windowStart: Long): Unit = {
@@ -136,7 +139,7 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
   }
 
   def insertPoint(el: Data_mcsky, windowEnd: Long, current: PmcskyState): Unit = {
-    val small_window = if( el.arrival >= windowEnd - W_min) true else false
+    val small_window = if (el.arrival >= windowEnd - W_min) true else false
     //Check against MCs on 3 / 2 * R_max
     val closeMCs = findCloseMCs(el, current)
     //Check if closer MC is within R_min / 2
@@ -151,19 +154,19 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
       val NC = ListBuffer[Data_mcsky]() //List to hold points for new cluster formation
       current.index.values.toList.reverse //get the points so far from latest to earliest
         .takeWhile(p => {
-        var res = true
-        if (p.id != el.id) {
-          if (closeMCs.keySet.contains(p.mc) || p.mc == -1) { //check only the points in PD and close MCs
-            val thisDistance = distance(el.value.toArray, p.value.toArray)
-            if (thisDistance <= R_max) {
-              val skyRes = neighborSkyband(el, p, thisDistance)
-              if (!skyRes && thisDistance <= R_min) res = false
-              if (p.arrival >= windowEnd - W_min && p.mc == -1 && thisDistance <= R_min / 2) NC += p
+          var res = true
+          if (p.id != el.id) {
+            if (closeMCs.keySet.contains(p.mc) || p.mc == -1) { //check only the points in PD and close MCs
+              val thisDistance = distance(el.value.toArray, p.value.toArray)
+              if (thisDistance <= R_max) {
+                val skyRes = neighborSkyband(el, p, thisDistance)
+                if (!skyRes && thisDistance <= R_min) res = false
+                if (p.arrival >= windowEnd - W_min && p.mc == -1 && thisDistance <= R_min / 2) NC += p
+              }
             }
           }
-        }
-        res
-      })
+          res
+        })
       if (small_window && NC.size >= k_max) { //Create new MC
         createNewMC(el, NC, current)
       }
@@ -174,7 +177,7 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
   }
 
   def updatePoint(el: Data_mcsky, windowEnd: Long, current: PmcskyState, windowStart: Long): Unit = {
-    val small_window = if( el.arrival >= windowEnd - W_min) true else false
+    val small_window = if (el.arrival >= windowEnd - W_min) true else false
     //Remove old points from lSky
     el.lSky.keySet.foreach(p => el.lSky.update(p, el.lSky(p).filter(_._2 >= windowStart)))
     //Create input
@@ -185,17 +188,17 @@ class PmcSky(c_queries: ListBuffer[Query], c_slide: Int) {
     val NC = ListBuffer[Data_mcsky]() //List to hold points for new cluster formation
     current.index.values.toList.reverse //Check new points
       .takeWhile(p => {
-      var tmpRes = true
-      if (p.arrival >= windowEnd - slide) {
-        val thisDistance = distance(el.value.toArray, p.value.toArray)
-        if (thisDistance <= R_max) {
-          val skyRes = neighborSkyband(el, p, thisDistance)
-          if (!skyRes && thisDistance <= R_min) res = false
-          if (current.PD.contains(p.id) && thisDistance <= R_min / 2) NC += p
-        }
-      } else tmpRes = false
-      res && tmpRes
-    })
+        var tmpRes = true
+        if (p.arrival >= windowEnd - slide) {
+          val thisDistance = distance(el.value.toArray, p.value.toArray)
+          if (thisDistance <= R_max) {
+            val skyRes = neighborSkyband(el, p, thisDistance)
+            if (!skyRes && thisDistance <= R_min) res = false
+            if (current.PD.contains(p.id) && thisDistance <= R_min / 2) NC += p
+          }
+        } else tmpRes = false
+        res && tmpRes
+      })
 
     if (res)
       old_sky.foreach(l => { //Check the old skyband inputList

@@ -39,7 +39,7 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
   }).distinct.sorted
   val S_var_max = S_var.max
 
-  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Unit = {
+  def process(elements: Dataset[(Int, Data_lsky)], windowEnd: Long, spark: SparkSession, windowStart: Long): Query = {
 
     //Metrics
     counter += 1
@@ -94,13 +94,15 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
       }
     })
 
+    val slide_to_report = S_distinct_downgraded.filter(current.slide_count % _ == 0).map(_*slide)
+    var tmpQuery = Query(R_distinct_list(0), k_distinct_list(0), W_distinct_list(0), slide_to_report.head, all_queries(0)(0)(0))
     if (S_var.contains(current.slide_count)) {
       val slide_to_report = S_distinct_downgraded.filter(current.slide_count % _ == 0).map(_*slide)
       for (i <- 0 until R_size) {
         for (y <- 0 until k_size) {
           for (z <- 0 until W_size) {
             slide_to_report.foreach(p => {
-              val tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),W_distinct_list(z), p,all_queries(i)(y)(z))
+              tmpQuery = Query(R_distinct_list(i),k_distinct_list(y),W_distinct_list(z), p,all_queries(i)(y)(z))
             })
           }
         }
@@ -120,6 +122,7 @@ class Psod(c_queries: ListBuffer[Query], c_slide: Int) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+    tmpQuery
   }
 
   def insertPoint(el: Data_lsky, current: PsodState): Unit = {
