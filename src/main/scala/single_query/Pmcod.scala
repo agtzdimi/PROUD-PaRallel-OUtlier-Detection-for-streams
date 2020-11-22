@@ -11,7 +11,7 @@ import scala.collection.mutable.ListBuffer
 case class MicroCluster(var center: ListBuffer[Double], var points: ListBuffer[Data_mcod])
 case class PmcodState(var PD: mutable.HashMap[Int, Data_mcod], var MC: mutable.HashMap[Int, MicroCluster])
 
-class Pmcod(c_query: Query) {
+class Pmcod(c_query: Query) extends Serializable {
 
   @transient private var counter: Int = _
   @transient private var cpu_time: Long = 0L
@@ -21,29 +21,28 @@ class Pmcod(c_query: Query) {
   val R: Double = query.R
   val k: Int = query.k
   var mc_counter: Int = 1
+  val PD = mutable.HashMap[Int, Data_mcod]()
+  val MC = mutable.HashMap[Int, MicroCluster]()
+  val current = PmcodState(PD, MC)
 
   def process(elements: Dataset[(Int, Data_mcod)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
-
     val inputList = elements.rdd.collect().toList.toIterable
     //create state
-    val PD = mutable.HashMap[Int, Data_mcod]()
-    val MC = mutable.HashMap[Int, MicroCluster]()
-    val current = PmcodState(PD, MC)
 
     //insert new elements
     inputList
-      .filter(_._2.arrival >= windowEnd - slide)
-      .foreach(p => insertPoint(p._2, true,null, current))
+      .filter( p => p._2.arrival > windowEnd - slide)
+      .foreach(p => insertPoint(p._2, true,current = current))
 
     //Find outliers
     var outliers = 0
     current.PD.values.foreach(p => {
       if (!p.safe_inlier && p.flag == 0)
-        if (p.count_after + p.nn_before.count(_ >= windowEnd) < k) {
+        if (p.count_after + p.nn_before.count(_ >= windowStart) < k) {
           outliers += 1
         }
     })
@@ -56,7 +55,9 @@ class Pmcod(c_query: Query) {
       .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         val delete = deletePoint(p._2, current)
-        if (delete > 0) deletedMCs += delete
+        if (delete > 0) {
+          deletedMCs += delete
+        }
       })
 
     //Delete MCs
@@ -75,6 +76,7 @@ class Pmcod(c_query: Query) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
+
     tmpQuery
   }
 
@@ -120,7 +122,6 @@ class Pmcod(c_query: Query) {
 
       if (NC.size >= k) { //Create new MC
         createMC(el, NC, NNC, current)
-        println(el)
       }
       else { //Insert in PD
         closeMCs.foreach(mc => el.Rmc += mc._1)
@@ -134,7 +135,6 @@ class Pmcod(c_query: Query) {
             })
           })
         current.PD += ((el.id, el))
-        println(el)
       }
     }
   }

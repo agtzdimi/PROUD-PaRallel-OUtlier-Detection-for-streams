@@ -7,14 +7,14 @@ import java.time.temporal.{ChronoField, TemporalAccessor}
 import com.github.fsanaulla.chronicler.core.alias.ErrorOr
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
-import com.github.fsanaulla.chronicler.spark.structured.streaming._
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.window
+import org.apache.spark.sql.functions.{window}
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.streaming.{Durations, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
@@ -29,24 +29,6 @@ import scala.collection.mutable.ListBuffer
 object Outlier_detection {
 
   val delimiter = ";"
-  def dateTimeStringToEpoch (s: String, pattern: String): Long = DateTimeFormatter.ofPattern (pattern).withZone (ZoneOffset.UTC).parse (s, (p: TemporalAccessor) => p.getLong (ChronoField.INSTANT_SECONDS) )
-
-  implicit val wr: InfluxWriter[Row] = new InfluxWriter[Row] {
-    override def write(o: Row): ErrorOr[String] = {
-      val sb = StringBuilder.newBuilder
-
-      val date = dateTimeStringToEpoch(o(2).toString(), "yyyy-MM-dd HH:mm:ss.SSS")
-      // Query looks like: <measurement>, <tags> <fields> <timestamp RFC3339>
-      sb
-        .append("Outlier ")
-        .append("value=\"")
-        .append(o(1))
-        .append("\" ")
-        .append(date)
-
-      Right(sb.toString())
-    }
-  }
 
   def main(args: Array[String]) {
 
@@ -63,6 +45,8 @@ object Outlier_detection {
     Logger.getLogger("org").setLevel(Level.ERROR)
     Logger.getLogger("akka").setLevel(Level.ERROR)
     val sc = new SparkContext(conf)
+    val ssc = new StreamingContext(sc, Durations.seconds(1))
+
 
     case class Config(
                        DEBUG: Boolean = false,
@@ -167,6 +151,8 @@ object Outlier_detection {
 
     //Hardcoded parameter for partitioning and windowing
     val partitions = 16
+    var windowStart: Long = 0;
+    var windowEnd: Long = 0;
     // Input file
     val file_input = System.getenv("JOB_INPUT") //File input
     // Comma Separated Topics
@@ -207,10 +193,12 @@ object Outlier_detection {
     println(arguments.DEBUG)
     println(kafka_brokers)
     println(kafka_topic)
-
     val data = if (arguments.DEBUG) {
-      val myInput = s"$file_input/$arguments.arguments.dataset/input_20k.txt"
-      val debugFile = spark.readStream.text(myInput)
+      val myInput = s"$file_input"
+      val debugFile = spark.readStream
+        .format("text")
+        .option("maxFilesPerTrigger", 1)
+        .load(myInput)
       debugFile
     } else {
       val kafkaDF = spark
@@ -223,11 +211,11 @@ object Outlier_detection {
     } // for .toDF() method
 
     // Publish data to console
-    val query = data
-      .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
-      .writeStream
-      .format("console")
-      .start()
+    /*   val query = data
+         .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
+         .writeStream
+         .format("console")
+         .start()*/
 
     val influxdb_host = System.getenv("INFLUXDB_HOST")
     val influxdb_port = System.getenv("INFLUXDB_PORT")
@@ -249,43 +237,62 @@ object Outlier_detection {
       )
     )
 
-    val saveToInflux = data
+    /*val saveToInflux = data
       .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)")
       .writeStream
       .saveToInfluxDB(influxdb_db, handler)
-      .start()
+      .start()*/
 
     import spark.implicits._
 
     var key: Int = 0
-    var outliers = ListBuffer[(Long, Query)]()
     val windowedData = data
+      //.withColumn("timestamp", lit(current_timestamp()))
       .withColumn("timestamp", ($"timestamp").cast(TimestampType))
-      .withWatermark("timestamp", s"$common_W seconds")
+      .withWatermark("timestamp", s"$common_W millisecond")
       .groupBy(
-        window($"timestamp", s"$common_W seconds", s"$common_S seconds"), $"key", $"value", $"timestamp"
+        window($"timestamp", s"$common_W millisecond", s"$common_S millisecond"), $"value", $"timestamp"
       )
-      .agg($"key", $"value".cast("String").as("FinalValue"), $"timestamp")
-      .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "CAST(timestamp AS STRING)", "window")
+      .agg($"value".cast("String").as("FinalValue"), $"timestamp")
+      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)", "window")
       .writeStream
       .outputMode("complete")
-      .trigger(Trigger.ProcessingTime(10))
+      //.trigger(Trigger.ProcessingTime(20))
       .foreachBatch {
         (batchDs: Dataset[Row], batchId: Long) =>
-          var windowStart: Long = 0;
-          var windowEnd: Long = 0;
+          val windowsVals = batchDs.limit(1).map(record => record.get(2).toString()).collect().headOption.getOrElse("").toString()
+          try {
+            val startingWindowStr = windowsVals.split(",")(0).toString().replace("[", "")
+            var pattern = "yyyy-MM-dd HH:mm:ss.S"
+            windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+            val endingWindowStr = windowsVals.split(",")(1).toString().replace("]", "")
+            pattern = "yyyy-MM-dd HH:mm:ss.S"
+            windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+          } catch {
+            case _: Throwable => println("exception ignored")
+          }
+
+          //
           val data2 = batchDs
             .map((record) => {
-              val arrival = record.get(2).toString()
-              val startingWindowStr = record.get(3).toString().split(",")(0).toString().replace("[","")
-              windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
-              val endingWindowStr = record.get(3).toString().split(",")(1).toString().replace("]","")
-              windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+              val arrival = record.get(1).toString()
+              var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
               key += 1
-              val date = dateTimeStringToEpoch(arrival, "yyyy-MM-dd HH:mm:ss.SSS")
-              new Data_basis(key, ListBuffer(record.get(1).toString().split(",").map(_.toDouble): _ *), date, 0)
+              var miliseconds = "S"
+              try {
+                miliseconds = "S" * arrival.split("\\.")(1).toString().length
+              }
+              catch {
+                case e: ArrayIndexOutOfBoundsException => miliseconds = ""
+              }
+              if (miliseconds == "") {
+                pattern = "yyyy-MM-dd HH:mm:ss"
+              } else {
+                pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
+              }
+              val date = dateTimeStringToEpoch(arrival, pattern)
+              new Data_basis(key, ListBuffer(record.get(0).toString().split("&").map(_.toDouble): _ *), date, 0)
             })
-
           //Start partitioning
           val partitioned_data = arguments.partitioning match {
             case "replication" =>
@@ -359,17 +366,21 @@ object Outlier_detection {
               }
           }
           val keyValPair = (batchId, output_data)
+          var outliers = ListBuffer[(Long, Query)]()
           outliers += keyValPair
           val printOutliers = new PrintOutliers()
           printOutliers.process(outliers.toIterable)
-
       }
       .start()
 
 
-    query.awaitTermination()
+    /*
+        query.awaitTermination()
+    */
     windowedData.awaitTermination()
-    saveToInflux.awaitTermination()
+    /*
+        saveToInflux.awaitTermination()
+    */
     //Timestamp the data
     /*
 
@@ -390,5 +401,30 @@ object Outlier_detection {
        env.execute("Distance-based outlier detection with Flink")*/
     spark.stop()
   }
+
+  implicit val wr: InfluxWriter[Row] = new InfluxWriter[Row] {
+    override def write(o: Row): ErrorOr[String] = {
+      val sb = StringBuilder.newBuilder
+
+      var miliseconds = ""
+      try {
+        miliseconds = "S" * o(2).toString().split("\\.")(1).toString().length
+      }
+
+      var pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
+      val date = dateTimeStringToEpoch(o(2).toString(), pattern)
+      // Query looks like: <measurement>, <tags> <fields> <timestamp RFC3339>
+      sb
+        .append("Outlier ")
+        .append("value=\"")
+        .append(o(1))
+        .append("\" ")
+        .append(date)
+
+      Right(sb.toString())
+    }
+  }
+
+  def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
 
 }
