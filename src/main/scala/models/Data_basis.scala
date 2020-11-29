@@ -13,7 +13,7 @@ case class Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_f
   val id: Int = c_id
   val value: ListBuffer[Double] = c_val
   val dimensions: Int = value.length
-  val arrival: Long = c_arrival
+  var arrival: Long = c_arrival
   val flag: Int = c_flag
   val state: Seq[ListBuffer[Double]] = Seq(value)
   val hashcode: Int = state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)

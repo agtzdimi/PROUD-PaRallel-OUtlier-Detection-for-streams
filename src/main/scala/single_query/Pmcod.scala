@@ -54,7 +54,6 @@ class Pmcod(c_query: Query) extends Serializable {
     })
 
     val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
-
     //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
     inputList
@@ -65,7 +64,6 @@ class Pmcod(c_query: Query) extends Serializable {
           deletedMCs += delete
         }
       })
-
     //Delete MCs
     if (deletedMCs.nonEmpty) {
       var reinsert = ListBuffer[Data_mcod]()
@@ -78,7 +76,6 @@ class Pmcod(c_query: Query) extends Serializable {
       //Reinsert points from deleted MCs
       reinsert.foreach(p => insertPoint(p, false, reinsertIndexes, state))
     }
-
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)

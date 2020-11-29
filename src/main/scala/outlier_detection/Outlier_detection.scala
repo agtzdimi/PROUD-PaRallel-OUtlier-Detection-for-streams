@@ -12,24 +12,24 @@ import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.{current_timestamp, window}
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode}
+import org.apache.spark.sql.functions.window
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout}
 import org.apache.spark.sql.types.TimestampType
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
-import single_query.{MicroCluster, PmcodState}
+import single_query.PmcodState
 import utils.Helpers.find_gcd
-import utils.Utils.{PrintOutliers, Query}
+import utils.Utils.Query
 
-import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
 
   val delimiter = ";"
+  val line_delimiter = "&"
 
   def main(args: Array[String]) {
 
@@ -258,64 +258,83 @@ object Outlier_detection {
       .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)", "window")
       .writeStream
       .outputMode("append")
+      .format("console")
       .foreachBatch {
-      (batchDs: Dataset[Row], batchId: Long) =>
-        val data2 = batchDs
-          .map((record) => {
-            val arrival = record.get(1).toString()
-            var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
-            key += 1
-            var miliseconds = "S"
+        (batchDF: DataFrame, batchId: Long) =>
+
+          if (batchId % 10 == 1) {
+            val windowsVals = batchDF.limit(1).map(record => record.get(2).toString()).collect().headOption.getOrElse("").toString()
+            var windowEnd: Long = 0;
             try {
-              miliseconds = "S" * arrival.split("\\.")(1).toString().length
+              val startingWindowStr = windowsVals.split(",")(0).toString().replace("[", "")
+              var pattern = "yyyy-MM-dd HH:mm:ss.S"
+              windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+              val endingWindowStr = windowsVals.split(",")(1).toString().replace("]", "")
+              pattern = "yyyy-MM-dd HH:mm:ss.S"
+              windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
+            } catch {
+              case _: Throwable => println("exception ignored")
             }
-            catch {
-              case e: ArrayIndexOutOfBoundsException => miliseconds = ""
-            }
-            if (miliseconds == "") {
-              pattern = "yyyy-MM-dd HH:mm:ss"
-            } else {
-              pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
-            }
-            val date = dateTimeStringToEpoch(arrival, pattern)
-            new Data_basis(key, ListBuffer(record.get(0).toString().split("&").map(_.toDouble): _ *), date, 0)
-          })
-        //Start partitioning
-        val partitioned_data = arguments.partitioning match {
-          case "replication" =>
-            data2
-              .flatMap(record => replication_partitioning(partitions, record))
-          case "grid" =>
-            data2
-              .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
-          case "tree" =>
-            data2
-              .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
-        }
-
-        val output_data = partitioned_data
-          .groupByKey(_._1)
-          .mapGroupsWithState[PmcodState, SessionUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
-            case (sessionId: Int, events: Iterator[(Int,Data_basis)], state: GroupState[PmcodState]) =>
-
-              val listbuffer = ListBuffer[(Int, Data_mcod)]()
-              for (value <- events) {
-                val point = (value._1, new Data_mcod(value._2))
-                listbuffer += point
-              }
-              val now = Calendar.getInstance()
-              val t = now.getTimeInMillis
-              val afterAddingWindow = new Date(t + common_W)
-              // create the date/time formatters
-              val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-              windowStart = dateTimeStringToEpoch(format.format(now.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-              windowEnd = dateTimeStringToEpoch(format.format(afterAddingWindow.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-              val pmcodQ = new single_query.Pmcod(myQueries.head)
-              val outliers = pmcodQ.process(listbuffer, windowStart, spark, windowEnd,state)
-              state.update(outliers._1.get)
-              SessionUpdate(sessionId, outliers._1.get, false, outliers._2)
           }
-       output_data.foreach(rec => println(batchId,rec.query))
+          val data2 = batchDF
+            .map((record) => {
+              val arrival = record.get(1).toString()
+              var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
+              key += 1
+              var miliseconds = "S"
+              try {
+                miliseconds = "S" * arrival.split("\\.")(1).toString().length
+              }
+              catch {
+                case e: ArrayIndexOutOfBoundsException => miliseconds = ""
+              }
+              if (miliseconds == "") {
+                pattern = "yyyy-MM-dd HH:mm:ss"
+              } else {
+                pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
+              }
+              val date = dateTimeStringToEpoch(arrival, pattern)
+              new Data_basis(key, ListBuffer(record.get(0).toString().split("&").map(_.toDouble): _ *), date, 0)
+            })
+          //Start partitioning
+          val partitioned_data = arguments.partitioning match {
+            case "replication" =>
+              data2
+                .flatMap(record => replication_partitioning(partitions, record))
+            case "grid" =>
+              data2
+                .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
+            case "tree" =>
+              data2
+                .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
+          }
+
+          val output_data = partitioned_data
+            .groupByKey(_._1)
+            .mapGroupsWithState[PmcodState, SessionUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
+              case (sessionId: Int, events: Iterator[(Int, Data_basis)], state: GroupState[PmcodState]) =>
+
+                val listbuffer = ListBuffer[(Int, Data_mcod)]()
+                val now = Calendar.getInstance()
+                val t = now.getTimeInMillis
+                var ascendTimestampKey = 1
+                var afterAddingWindow = new Date(t + ascendTimestampKey)
+                for (value <- events) {
+                  // create the date/time formatters
+                  val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+                  val arrival = dateTimeStringToEpoch(format.format(afterAddingWindow.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
+                  value._2.arrival = arrival
+                  val point = (value._1, new Data_mcod(value._2))
+                  listbuffer += point
+                  ascendTimestampKey += 1
+                  afterAddingWindow = new Date(t + ascendTimestampKey)
+                }
+                val pmcodQ = new single_query.Pmcod(myQueries.head)
+                val outliers = pmcodQ.process(listbuffer, windowStart, spark, windowEnd, state)
+                state.update(outliers._1.get)
+                SessionUpdate(sessionId, outliers._1.get, false, outliers._2)
+            }
+          output_data.foreach(rec => println(batchId, rec.query.outliers))
 
         //Start algorithm
         //Start by mapping the basic data point to the algorithm's respective class
@@ -380,8 +399,8 @@ object Outlier_detection {
         outliers += keyValPair
         val printOutliers = new PrintOutliers()
         printOutliers.process(outliers.toIterable)*/
-    }
-    .start()
+      }
+      .start()
 
     /*
         query.awaitTermination()
@@ -459,4 +478,5 @@ object Outlier_detection {
                             pmcodState: PmcodState,
                             expired: Boolean,
                             query: Query)
+
 }
