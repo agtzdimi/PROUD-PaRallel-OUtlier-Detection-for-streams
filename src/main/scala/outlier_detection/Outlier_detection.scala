@@ -20,10 +20,11 @@ import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
-import single_query.PmcodState
+import single_query.{MicroCluster, PmcodState}
 import utils.Helpers.find_gcd
 import utils.Utils.Query
 
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
@@ -261,40 +262,12 @@ object Outlier_detection {
       .format("console")
       .foreachBatch {
         (batchDF: DataFrame, batchId: Long) =>
-
-          if (batchId % 10 == 1) {
-            val windowsVals = batchDF.limit(1).map(record => record.get(2).toString()).collect().headOption.getOrElse("").toString()
-            var windowEnd: Long = 0;
-            try {
-              val startingWindowStr = windowsVals.split(",")(0).toString().replace("[", "")
-              var pattern = "yyyy-MM-dd HH:mm:ss.S"
-              windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
-              val endingWindowStr = windowsVals.split(",")(1).toString().replace("]", "")
-              pattern = "yyyy-MM-dd HH:mm:ss.S"
-              windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
-            } catch {
-              case _: Throwable => println("exception ignored")
-            }
-          }
           val data2 = batchDF
             .map((record) => {
-              val arrival = record.get(1).toString()
-              var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
-              key += 1
-              var miliseconds = "S"
-              try {
-                miliseconds = "S" * arrival.split("\\.")(1).toString().length
-              }
-              catch {
-                case e: ArrayIndexOutOfBoundsException => miliseconds = ""
-              }
-              if (miliseconds == "") {
-                pattern = "yyyy-MM-dd HH:mm:ss"
-              } else {
-                pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
-              }
-              val date = dateTimeStringToEpoch(arrival, pattern)
-              new Data_basis(key, ListBuffer(record.get(0).toString().split("&").map(_.toDouble): _ *), date, 0)
+              val id = record.get(0).toString.split("&")(0).toInt
+              val value = record.get(0).toString.split("&")(1).map(_.toDouble).to[ListBuffer]
+              val timestamp = id.toLong
+              new Data_basis(id, value, timestamp, 0)
             })
           //Start partitioning
           val partitioned_data = arguments.partitioning match {
@@ -310,29 +283,20 @@ object Outlier_detection {
           }
 
           val output_data = partitioned_data
+            .map(record => (record._1, new Data_mcod(record._2)))
             .groupByKey(_._1)
             .mapGroupsWithState[PmcodState, SessionUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
-              case (sessionId: Int, events: Iterator[(Int, Data_basis)], state: GroupState[PmcodState]) =>
-
-                val listbuffer = ListBuffer[(Int, Data_mcod)]()
-                val now = Calendar.getInstance()
-                val t = now.getTimeInMillis
-                var ascendTimestampKey = 1
-                var afterAddingWindow = new Date(t + ascendTimestampKey)
-                for (value <- events) {
-                  // create the date/time formatters
-                  val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-                  val arrival = dateTimeStringToEpoch(format.format(afterAddingWindow.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-                  value._2.arrival = arrival
-                  val point = (value._1, new Data_mcod(value._2))
-                  listbuffer += point
-                  ascendTimestampKey += 1
-                  afterAddingWindow = new Date(t + ascendTimestampKey)
+              case (sessionId: Int, events: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]) =>
+                val prevState = state.getOption.getOrElse {
+                  val PD = mutable.HashMap[Int, Data_mcod]()
+                  val MC = mutable.HashMap[Int, MicroCluster]()
+                  PmcodState(PD, MC)
                 }
                 val pmcodQ = new single_query.Pmcod(myQueries.head)
-                val outliers = pmcodQ.process(listbuffer, windowStart, spark, windowEnd, state)
-                state.update(outliers._1.get)
-                SessionUpdate(sessionId, outliers._1.get, false, outliers._2)
+                val outliers = pmcodQ.process(events, windowEnd, windowStart, prevState)
+                state.update(outliers._1)
+                println(state)
+                SessionUpdate(sessionId, outliers._1, false, outliers._2)
             }
           output_data.foreach(rec => println(batchId, rec.query.outliers))
 
