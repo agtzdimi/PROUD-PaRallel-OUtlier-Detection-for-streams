@@ -25,7 +25,7 @@ class Pmcod(c_query: Query) extends Serializable {
   val PD = mutable.HashMap[Int, Data_mcod]()
   val MC = mutable.HashMap[Int, MicroCluster]()
 
-  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long, state: PmcodState):(PmcodState,Query) = {
+  def process(elements: Iterator[(Int, Data_mcod)], windowEnd: Long, windowStart: Long, state: PmcodState):(PmcodState,Query) = {
 
     //Metrics
     counter += 1
@@ -35,7 +35,7 @@ class Pmcod(c_query: Query) extends Serializable {
 
     //insert new elements
     inputList
-      .filter( p => p._2.arrival > windowEnd - slide)
+      .filter( _._2.arrival >= windowEnd - slide)
       .foreach(p => insertPoint(p._2, true,state = state))
 
     //Find outliers

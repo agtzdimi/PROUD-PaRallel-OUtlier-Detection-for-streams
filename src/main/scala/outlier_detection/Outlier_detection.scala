@@ -5,15 +5,15 @@ import java.text.SimpleDateFormat
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.{ChronoField, TemporalAccessor}
-import java.util.{Calendar, Date}
+import java.util.Calendar
 
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.{current_timestamp, window}
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode}
+import org.apache.spark.sql.functions.{current_timestamp, lit, typedLit, window}
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.sql.{Row, SparkSession}
 import partitioning.Grid.grid_partitioning
@@ -30,7 +30,10 @@ import scala.collection.mutable.ListBuffer
 object Outlier_detection {
 
   val delimiter = ";"
+  val line_delimeter = '&'
   var myQueriesGlobal = new ListBuffer[Query]()
+  var windowStart: Long = -10000
+  var windowEnd: Long = 0
 
   def main(args: Array[String]) {
 
@@ -153,8 +156,6 @@ object Outlier_detection {
 
     //Hardcoded parameter for partitioning and windowing
     val partitions = 16
-    var windowStart: Long = 0
-    var windowEnd: Long = 0
     // Input file
     val file_input = System.getenv("JOB_INPUT") //File input
     // Comma Separated Topics
@@ -257,23 +258,10 @@ object Outlier_detection {
 
     val data2 = windowedData
       .map(record => {
-        /*val arrival = record.get(1).toString
-        var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
-        key += 1
-        var miliseconds = "S"
-        try {
-          miliseconds = "S" * arrival.split("\\.")(1).length
-        }
-        catch {
-          case e: ArrayIndexOutOfBoundsException => miliseconds = ""
-        }
-        if (miliseconds == "") {
-          pattern = "yyyy-MM-dd HH:mm:ss"
-        } else {
-          pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
-        }*/
-        val date = key + 1
-        Data_basis(key, ListBuffer(record.get(0).toString.split("&").map(_.toDouble): _ *), date, 0)
+        val id = record.get(0).toString.split(line_delimeter)(0).toInt
+        val value = record.get(0).toString.split(line_delimeter)(1).map(_.toDouble).to[ListBuffer]
+        val timestamp = id.toLong
+        new Data_basis(id, value, timestamp, 0)
       })
     //Start partitioning
     val partitioned_data = arguments.partitioning match {
@@ -288,27 +276,29 @@ object Outlier_detection {
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
     }
 
-    partitioned_data
+    val timestamps = partitioned_data
+      .map(rec => rec._2.arrival)
+
+    val out = partitioned_data
+      .map(record => (record._1, new Data_mcod(record._2)))
       .groupByKey(_._1)
-      .mapGroupsWithState(GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
+      .flatMapGroupsWithState(outputMode = OutputMode.Append, GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
       .toDF()
+
+    val output_data = out
+      .withColumn("timestamp",lit(current_timestamp()))
+      .withWatermark("timestamp", s"$common_W millisecond")
+      .groupBy(
+        window($"timestamp", s"$common_W millisecond", s"$common_S millisecond"), $"value", $"timestamp"
+      )
+      .agg($"value".cast("String").as("Outliers"))
       .writeStream
-      .outputMode("update")
+      .trigger(Trigger.ProcessingTime("500 millisecond"))
+      .outputMode("append")
       .format("console")
-      .outputMode(OutputMode.Update)
       .start()
-      .awaitTermination()
 
-
-
-
-
-
-
-
-
-
-
+    output_data.awaitTermination()
 
     /*partitioned_data
     .writeStream
@@ -465,9 +455,9 @@ object Outlier_detection {
     /*
         query.awaitTermination()
     */
-/*
-    outputData.awaitTermination()
-*/
+    /*
+        outputData.awaitTermination()
+    */
 
     /*
         saveToInflux.awaitTermination()
@@ -514,32 +504,24 @@ object Outlier_detection {
     Right(sb.toString())
   }
 
-  def updatePoints(key: Int, values: Iterator[(Int,Data_basis)],state: GroupState[PmcodState]): Int = {
+  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]): Iterator[Int] = {
     val prevState = state.getOption.getOrElse {
-        val PD = mutable.HashMap[Int, Data_mcod]()
-        val MC = mutable.HashMap[Int, MicroCluster]()
-        PmcodState(PD, MC)
-      }
+      val PD = mutable.HashMap[Int, Data_mcod]()
+      val MC = mutable.HashMap[Int, MicroCluster]()
+      PmcodState(PD, MC)
+    }
     val now = Calendar.getInstance()
     val t = now.getTimeInMillis
     val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-    val windowStart = dateTimeStringToEpoch(format.format(now.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-    val windowEnd = windowStart + 10000
+    windowStart += 1
+    windowEnd += 1
     var counter = 1
-      val listbuffer = ListBuffer[(Int, Data_mcod)]()
-      for (value <- values) {
-        val point = (value._1, new Data_mcod(value._2))
-        listbuffer += point
-        counter += 1
-        println(point)
-      }
-
-      // create the date/time formatters
-
-      val pmcodQ = new single_query.Pmcod(myQueriesGlobal.head)
-      val outliers = pmcodQ.process(listbuffer, windowEnd, windowStart ,prevState)
-      state.update(outliers._1)
-      outliers._2.outliers
+    // create the date/time formatters
+    println(windowEnd, windowStart,values.next())
+    val outliers = new single_query.Pmcod(myQueriesGlobal.head)
+      .process(values, windowEnd, windowStart, prevState)
+    state.update(outliers._1)
+    Iterator(outliers._2.outliers)
   }
 
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
@@ -567,4 +549,5 @@ object Outlier_detection {
                             id: Int,
                             pmcodState: PmcodState,
                             expired: Boolean)
+
 }
