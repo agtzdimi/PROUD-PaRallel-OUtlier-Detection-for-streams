@@ -2,9 +2,7 @@ package single_query
 
 import utils.Utils.Query
 import utils.Helpers.distance
-import models.{Data_advanced, Data_mcod}
-import org.apache.spark.sql.streaming.GroupState
-import org.apache.spark.sql.{Dataset, SparkSession}
+import models.Data_mcod
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -12,9 +10,10 @@ import scala.collection.mutable.ListBuffer
 case class MicroCluster(var center: ListBuffer[Double], var points: ListBuffer[Data_mcod])
 case class PmcodState(var PD: mutable.HashMap[Int, Data_mcod], var MC: mutable.HashMap[Int, MicroCluster])
 
-class Pmcod(c_query: Query) extends Serializable {
+class Pmcod(c_query: Query) {
 
   @transient private var counter: Int = _
+  var state: PmcodState = PmcodState(mutable.HashMap[Int, Data_mcod](), mutable.HashMap[Int, MicroCluster]())
   @transient private var cpu_time: Long = 0L
 
   val query: Query = c_query
@@ -22,21 +21,16 @@ class Pmcod(c_query: Query) extends Serializable {
   val R: Double = query.R
   val k: Int = query.k
   var mc_counter: Int = 1
-  val PD = mutable.HashMap[Int, Data_mcod]()
-  val MC = mutable.HashMap[Int, MicroCluster]()
 
-  def process(elements: Iterator[(Int, Data_mcod)], windowEnd: Long, windowStart: Long, state: PmcodState):(PmcodState,Query) = {
-
-    //Metrics
-    counter += 1
+  def process(elements: Iterator[(Int, Data_mcod)], windowEnd: Long, windowStart: Long, inpState: PmcodState):(PmcodState,Query) = {
+    
     val time_init = System.currentTimeMillis()
-    val inputList = elements.toIterable
-    //create state
+    state = inpState
 
     //insert new elements
-    inputList
-      .filter( _._2.arrival >= windowEnd - slide)
-      .foreach(p => insertPoint(p._2, true,state = state))
+    elements
+      .filter(_._2.arrival >= windowEnd - slide)
+      .foreach(p => insertPoint(p._2, true))
 
     //Find outliers
     var outliers = 0
@@ -48,16 +42,16 @@ class Pmcod(c_query: Query) extends Serializable {
     })
 
     val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+
     //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
-    inputList
+    elements
       .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
-        val delete = deletePoint(p._2, state)
-        if (delete > 0) {
-          deletedMCs += delete
-        }
+        val delete = deletePoint(p._2)
+        if (delete > 0) deletedMCs += delete
       })
+
     //Delete MCs
     if (deletedMCs.nonEmpty) {
       var reinsert = ListBuffer[Data_mcod]()
@@ -68,19 +62,20 @@ class Pmcod(c_query: Query) extends Serializable {
       val reinsertIndexes = reinsert.map(_.id)
 
       //Reinsert points from deleted MCs
-      reinsert.foreach(p => insertPoint(p, false, reinsertIndexes, state))
+      reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
     }
+
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
-
     (state,tmpQuery)
   }
 
-  def insertPoint(el: Data_mcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null, state: PmcodState): Unit = {
+  def insertPoint(el: Data_mcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null): Unit = {
+    var state = this.state
     if (!newPoint) el.clear(-1)
     //Check against MCs on 3/2R
-    val closeMCs = findCloseMCs(el,state)
+    val closeMCs = findCloseMCs(el)
     //Check if closer MC is within R/2
     val closerMC = if (closeMCs.nonEmpty)
       closeMCs.minBy(_._2)
@@ -88,10 +83,10 @@ class Pmcod(c_query: Query) extends Serializable {
       (0, Double.MaxValue)
     if (closerMC._2 <= R / 2) { //Insert element to MC
       if (newPoint) {
-        insertToMC(el, closerMC._1, true, null, state)
+        insertToMC(el, closerMC._1, true)
       }
       else {
-        insertToMC(el, closerMC._1, false, reinsert, state)
+        insertToMC(el, closerMC._1, false, reinsert)
       }
     }
     else { //Check against PD
@@ -118,7 +113,7 @@ class Pmcod(c_query: Query) extends Serializable {
         })
 
       if (NC.size >= k) { //Create new MC
-        createMC(el, NC, NNC, state)
+        createMC(el, NC, NNC)
       }
       else { //Insert in PD
         closeMCs.foreach(mc => el.Rmc += mc._1)
@@ -136,7 +131,7 @@ class Pmcod(c_query: Query) extends Serializable {
     }
   }
 
-  def deletePoint(el: Data_mcod, state: PmcodState): Int = {
+  def deletePoint(el: Data_mcod): Int = {
     var res = 0
     if (el.mc <= 0) { //Delete it from PD
       state.PD.remove(el.id)
@@ -147,7 +142,7 @@ class Pmcod(c_query: Query) extends Serializable {
     res
   }
 
-  def createMC(el: Data_mcod, NC: ListBuffer[Data_mcod], NNC: ListBuffer[Data_mcod], state: PmcodState): Unit = {
+  def createMC(el: Data_mcod, NC: ListBuffer[Data_mcod], NNC: ListBuffer[Data_mcod]): Unit = {
     NC.foreach(p => {
       p.clear(mc_counter)
       state.PD.remove(p.id)
@@ -160,7 +155,7 @@ class Pmcod(c_query: Query) extends Serializable {
     mc_counter += 1
   }
 
-  def insertToMC(el: Data_mcod, mc: Int, update: Boolean, reinsert: ListBuffer[Int] = null, state: PmcodState): Unit = {
+  def insertToMC(el: Data_mcod, mc: Int, update: Boolean, reinsert: ListBuffer[Int] = null): Unit = {
     el.clear(mc)
     state.MC(mc).points += el
     if (update) {
@@ -179,7 +174,7 @@ class Pmcod(c_query: Query) extends Serializable {
     }
   }
 
-  def findCloseMCs(el: Data_mcod, state: PmcodState): mutable.HashMap[Int, Double] = {
+  def findCloseMCs(el: Data_mcod): mutable.HashMap[Int, Double] = {
     val res = mutable.HashMap[Int, Double]()
     state.MC.foreach(mc => {
       val thisDistance = distance(el.value.toArray, mc._2.center.toArray)

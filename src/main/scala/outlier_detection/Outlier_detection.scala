@@ -32,8 +32,8 @@ object Outlier_detection {
   val delimiter = ";"
   val line_delimeter = '&'
   var myQueriesGlobal = new ListBuffer[Query]()
-  var windowStart: Long = -10000
-  var windowEnd: Long = 0
+  var windowStart: Long = -9500
+  var windowEnd: Long = 500
 
   def main(args: Array[String]) {
 
@@ -276,210 +276,27 @@ object Outlier_detection {
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
     }
 
-    val timestamps = partitioned_data
-      .map(rec => rec._2.arrival)
-
     val out = partitioned_data
       .map(record => (record._1, new Data_mcod(record._2)))
       .groupByKey(_._1)
-      .flatMapGroupsWithState(outputMode = OutputMode.Append, GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
+      .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
       .toDF()
 
     val output_data = out
       .withColumn("timestamp",lit(current_timestamp()))
       .withWatermark("timestamp", s"$common_W millisecond")
-      .groupBy(
+      /*.groupBy(
         window($"timestamp", s"$common_W millisecond", s"$common_S millisecond"), $"value", $"timestamp"
       )
-      .agg($"value".cast("String").as("Outliers"))
+      .agg($"value".cast("String").as("Outliers"))*/
       .writeStream
       .trigger(Trigger.ProcessingTime("500 millisecond"))
       .outputMode("append")
       .format("console")
+      .option("truncate", "false")
       .start()
 
     output_data.awaitTermination()
-
-    /*partitioned_data
-    .writeStream
-      .outputMode("update")
-      .format("console")
-      .outputMode(OutputMode.Update)
-      .start()
-      .awaitTermination()*/
-
-    /*val outputData = partitioned_data
-      .groupByKey(_._1)
-      .mapGroupsWithState[PmcodState, SessionUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
-        case (sessionId: Int, events: Iterator[(Int,Data_basis)], state: GroupState[PmcodState]) =>
-
-          val listbuffer = ListBuffer[(Int, Data_mcod)]()
-          for (value <- events) {
-            println(value)
-            val point = (value._1, new Data_mcod(value._2))
-            listbuffer += point
-          }
-          val now = Calendar.getInstance()
-          val t = now.getTimeInMillis
-          val afterAddingWindow = new Date(t + common_W)
-          // create the date/time formatters
-          val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-          windowStart = dateTimeStringToEpoch(format.format(now.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-          windowEnd = dateTimeStringToEpoch(format.format(afterAddingWindow.getTime), "yyyy-MM-dd HH:mm:ss.SSS")
-          val pmcodQ = new single_query.Pmcod(myQueries.head)
-          val outliers = pmcodQ.process(listbuffer, windowStart, spark, windowEnd,state)
-          SessionUpdate(sessionId, state.get, expired = false)
-      }
-      .writeStream
-      .outputMode("update")
-      .format("console")
-      .outputMode(OutputMode.Update)
-      .start()*/
-
-
-    /*.foreachBatch {
-      (batchDs: Dataset[Row], batchId: Long) =>
-        println(batchDs.select("value").rdd.count())
-        val windowsVals = batchDs.limit(1).map(record => record.get(2).toString()).collect().headOption.getOrElse("").toString()
-        try {
-          val startingWindowStr = windowsVals.split(",")(0).toString().replace("[", "")
-          var pattern = "yyyy-MM-dd HH:mm:ss.S"
-          windowStart = dateTimeStringToEpoch(startingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
-          val endingWindowStr = windowsVals.split(",")(1).toString().replace("]", "")
-          pattern = "yyyy-MM-dd HH:mm:ss.S"
-          windowEnd = dateTimeStringToEpoch(endingWindowStr, "yyyy-MM-dd HH:mm:ss.S")
-        } catch {
-          case _: Throwable => println("exception ignored")
-        }
-
-        //
-        val data2 = batchDs
-          .map((record) => {
-            val arrival = record.get(1).toString()
-            var pattern = "yyyy-MM-dd HH:mm:ss.SSS"
-            key += 1
-            var miliseconds = "S"
-            try {
-              miliseconds = "S" * arrival.split("\\.")(1).toString().length
-            }
-            catch {
-              case e: ArrayIndexOutOfBoundsException => miliseconds = ""
-            }
-            if (miliseconds == "") {
-              pattern = "yyyy-MM-dd HH:mm:ss"
-            } else {
-              pattern = "yyyy-MM-dd HH:mm:ss." + miliseconds
-            }
-            val date = dateTimeStringToEpoch(arrival, pattern)
-            new Data_basis(key, ListBuffer(record.get(0).toString().split("&").map(_.toDouble): _ *), date, 0)
-          })
-        //Start partitioning
-        val partitioned_data = arguments.partitioning match {
-          case "replication" =>
-            data2
-              .flatMap(record => replication_partitioning(partitions, record))
-          case "grid" =>
-            data2
-              .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
-          case "tree" =>
-            data2
-              .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
-        }
-
-        //Start algorithm
-        //Start by mapping the basic data point to the algorithm's respective class
-        //Key the data by partition and window them
-        //Call the algorithm process
-        val output_data = arguments.space match {
-          case "single" =>
-            arguments.algorithm match {
-              case "naive" =>
-                val naiveQ = new single_query.Naive(myQueries.head)
-                val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), windowEnd, spark)
-                val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
-                groupMetadataNaiveQ.process(groupMetadataNaive, windowEnd, spark)
-              case "advanced" =>
-                val advancedQ = new single_query.Advanced(myQueries.head)
-                val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
-                val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
-                groupMetadataAdvancedQ.process(groupMetadataAdvanced, windowEnd, spark)
-              case "advanced_extended" =>
-                val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
-                advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
-              case "slicing" =>
-                val slicingQ = new Slicing(myQueries.head)
-                slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), windowEnd, spark, windowStart)
-              case "pmcod" =>
-                val pmcodQ = new single_query.Pmcod(myQueries.head)
-                pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
-              case "pmcod_net" =>
-                val pmcodNetQ = new single_query.Pmcod_net(myQueries.head)
-                pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
-              case "rk" =>
-                arguments.algorithm match {
-                  case "amcod" =>
-                    val amcodQ = new rk_query.Amcod(myQueries)
-                    amcodQ.process(partitioned_data.map(record => (record._1, new Data_amcod(record._2))), windowEnd, spark, windowStart)
-                  case "sop" =>
-                    val sopQ = new rk_query.Sop(myQueries)
-                    sopQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "psod" =>
-                    val psodQ = new rk_query.Psod(myQueries)
-                    psodQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "pmcsky" =>
-                    val pmcskyQ = new rk_query.PmcSky(myQueries)
-                    pmcskyQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
-                }
-              case "rkws" =>
-                arguments.algorithm match {
-                  case "sop" =>
-                    val sopRKWSQ = new rkws_query.Sop(myQueries, common_S)
-                    sopRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "psod" =>
-                    val psodRKWSQ = new rkws_query.Psod(myQueries, common_S)
-                    psodRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "pmcsky" =>
-                    val pmcskyRKWSQ = new rkws_query.PmcSky(myQueries, common_S)
-                    pmcskyRKWSQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
-                }
-            }
-        }
-        val keyValPair = (batchId, output_data)
-        var outliers = ListBuffer[(Long, Query)]()
-        outliers += keyValPair
-        val printOutliers = new PrintOutliers()
-        printOutliers.process(outliers.toIterable)
-    }
-    .start()*/
-
-    /*
-        query.awaitTermination()
-    */
-    /*
-        outputData.awaitTermination()
-    */
-
-    /*
-        saveToInflux.awaitTermination()
-    */
-    //Timestamp the data
-    /*
-
-       //Start writing output
-       if(arguments.DEBUG){
-       output_data
-         .keyBy(_._1)
-         .timeWindow(Time.milliseconds(common_S))
-         .process(new PrintOutliers)
-         .print
-       } else {
-         output_data
-           .keyBy(_._1)
-           .timeWindow(Time.milliseconds(common_S))
-           .process(new WriteOutliers)
-           .addSink(new InfluxDBSink(influx_conf))
-       }
-       env.execute("Distance-based outlier detection with Flink")*/
     spark.streams.active.foreach(_.stop)
   }
 
@@ -504,12 +321,13 @@ object Outlier_detection {
     Right(sb.toString())
   }
 
-  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]): Iterator[Int] = {
+  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]): Iterator[SessionUpdate] = {
     val prevState = state.getOption.getOrElse {
       val PD = mutable.HashMap[Int, Data_mcod]()
       val MC = mutable.HashMap[Int, MicroCluster]()
       PmcodState(PD, MC)
     }
+    println(prevState)
     val now = Calendar.getInstance()
     val t = now.getTimeInMillis
     val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
@@ -517,11 +335,10 @@ object Outlier_detection {
     windowEnd += 1
     var counter = 1
     // create the date/time formatters
-    println(windowEnd, windowStart,values.next())
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(values, windowEnd, windowStart, prevState)
     state.update(outliers._1)
-    Iterator(outliers._2.outliers)
+    Iterator(SessionUpdate(outliers._2.outliers,state.get.MC.size,state.get.PD.size))
   }
 
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
@@ -541,13 +358,13 @@ object Outlier_detection {
   /**
     * User-defined data type representing the update information returned by mapGroupsWithState.
     *
-    * @param id         Id of the session
-    * @param pmcodState Current State
-    * @param expired    Is the session active or expired
+    * @param MC         Id of the session
+    * @param outliers Current State
+    * @param PD    Is the session active or expired
     */
   case class SessionUpdate(
-                            id: Int,
-                            pmcodState: PmcodState,
-                            expired: Boolean)
+                            outliers: Int,
+                            MC: Int,
+                            PD: Int)
 
 }
