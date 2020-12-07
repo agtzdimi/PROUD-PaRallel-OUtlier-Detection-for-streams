@@ -5,7 +5,7 @@ import scala.collection.mutable.ListBuffer
 
 object ExtraDataFrameOperationsMcod {
   object implicits {
-    implicit def dFWithExtraOperations(c_point: Data_basis) = Data_mcod(c_point: Data_basis)
+    implicit def dFWithExtraOperations(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) = Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int)
   }
 }
 

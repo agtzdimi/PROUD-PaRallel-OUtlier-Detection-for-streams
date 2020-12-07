@@ -27,10 +27,12 @@ class Pmcod(c_query: Query) {
     val time_init = System.currentTimeMillis()
     state = inpState
 
+    val inputList = elements.toList
     //insert new elements
-    elements
-      .filter(_._2.arrival >= windowEnd - slide)
-      .foreach(p => insertPoint(p._2, true))
+    inputList
+      .foreach(p => {
+        insertPoint(p._2, true
+      )})
 
     //Find outliers
     var outliers = 0
@@ -45,7 +47,7 @@ class Pmcod(c_query: Query) {
 
     //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
-    elements
+    inputList
       .filter(p => p._2.arrival < windowStart + slide)
       .foreach(p => {
         val delete = deletePoint(p._2)

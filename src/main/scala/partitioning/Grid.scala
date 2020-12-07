@@ -13,9 +13,9 @@ object Grid {
     1 -> "87.231;94.222;96.5;97.633;98.5;99.25;99.897;100.37;101.16;102.13;103.18;104.25;105.25;106.65;109.75")
 
   def grid_partitioning(partitions: Int,
-                       point: Data_basis,
-                       range: Double,
-                       dataset: String): ListBuffer[(Int, Data_basis)] = {
+                        point: Data_basis,
+                        range: Double,
+                        dataset: String): ListBuffer[(Int, Data_basis)] = {
 
     val res: (Int, ListBuffer[Int]) = dataset match {
       case "STK" => findPartSTOCK(point.value, range)

@@ -7,15 +7,17 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.{ChronoField, TemporalAccessor}
 import java.util.Calendar
 
+import breeze.linalg.sum
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.{current_timestamp, lit, typedLit, window}
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.functions.{col, current_timestamp, lit, typedLit, window}
 import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
-import org.apache.spark.sql.types.TimestampType
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.{Row, SparkSession, functions}
 import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
@@ -32,12 +34,12 @@ object Outlier_detection {
   val delimiter = ";"
   val line_delimeter = '&'
   var myQueriesGlobal = new ListBuffer[Query]()
-  var windowStart: Long = -9500
+  var windowStart: Long = 0
   var windowEnd: Long = 500
 
   def main(args: Array[String]) {
 
-    /*val conf = new SparkConf().setMaster("local[*]")
+    val conf = new SparkConf().setMaster("local[*]")
       .setAppName("Data Mining Project").setSparkHome(".")
     conf.set("spark.driver.memory", "14g")
     conf.set("spark.hadoop.validateOutputSpecs", "false")
@@ -46,12 +48,10 @@ object Outlier_detection {
     conf.set("spark.executor.memory", "3g")
     conf.set("spark.cores.max", "8")
     conf.set("spark.eventLog.enabled", "true")
-    conf.set("spark.eventLog.dir", "spark-logs")*/
+    conf.set("spark.eventLog.dir", "spark-logs")
     Logger.getLogger("org").setLevel(Level.ERROR)
     Logger.getLogger("akka").setLevel(Level.ERROR)
-    /*val sc = new SparkContext(conf)
-    val ssc = new StreamingContext(sc, Durations.seconds(1))*/
-
+    val sc = new SparkContext(conf)
 
     case class Config(
                        DEBUG: Boolean = false,
@@ -249,19 +249,24 @@ object Outlier_detection {
 
     import spark.implicits._
 
-    var key: Int = 0
+/*    var key: Int = 0
     val windowedData = data
       //.withColumn("timestamp", lit(current_timestamp()))
       .withColumn("timestamp", $"timestamp".cast(TimestampType))
       .withWatermark("timestamp", s"$common_W millisecond")
-      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")
+      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")*/
 
-    val data2 = windowedData
+    val data2 = data
+      .selectExpr("CAST(value AS STRING)")
       .map(record => {
         val id = record.get(0).toString.split(line_delimeter)(0).toInt
-        val value = record.get(0).toString.split(line_delimeter)(1).map(_.toDouble).to[ListBuffer]
+/*
+        val value = record.get(0).toString.split(line_delimeter)(1).toDouble.to[ListBuffer]
+*/
+        val valueList = ListBuffer[Double]()
+        valueList += record.get(0).toString.split(line_delimeter)(1).toDouble
         val timestamp = id.toLong
-        new Data_basis(id, value, timestamp, 0)
+        new Data_basis(id, valueList, timestamp, 0)
       })
     //Start partitioning
     val partitioned_data = arguments.partitioning match {
@@ -283,20 +288,21 @@ object Outlier_detection {
       .toDF()
 
     val output_data = out
-      .withColumn("timestamp",lit(current_timestamp()))
-      .withWatermark("timestamp", s"$common_W millisecond")
-      /*.groupBy(
-        window($"timestamp", s"$common_W millisecond", s"$common_S millisecond"), $"value", $"timestamp"
-      )
-      .agg($"value".cast("String").as("Outliers"))*/
+      .withColumn("timestamp",current_timestamp())
+      .withWatermark("timestamp","2 seconds")
+      .groupBy("timestamp")
+      .agg(functions.sum("outliers").as("Final Outliers"))
+
+
+    val outliers = output_data
       .writeStream
-      .trigger(Trigger.ProcessingTime("500 millisecond"))
+      .trigger(Trigger.ProcessingTime("2 seconds"))
       .outputMode("append")
       .format("console")
       .option("truncate", "false")
       .start()
 
-    output_data.awaitTermination()
+    outliers.awaitTermination()
     spark.streams.active.foreach(_.stop)
   }
 
@@ -327,18 +333,15 @@ object Outlier_detection {
       val MC = mutable.HashMap[Int, MicroCluster]()
       PmcodState(PD, MC)
     }
-    println(prevState)
     val now = Calendar.getInstance()
     val t = now.getTimeInMillis
     val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-    windowStart += 1
-    windowEnd += 1
     var counter = 1
     // create the date/time formatters
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(values, windowEnd, windowStart, prevState)
     state.update(outliers._1)
-    Iterator(SessionUpdate(outliers._2.outliers,state.get.MC.size,state.get.PD.size))
+    Iterator(SessionUpdate(outliers._2.outliers.toString, key.toString))
   }
 
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
@@ -358,13 +361,11 @@ object Outlier_detection {
   /**
     * User-defined data type representing the update information returned by mapGroupsWithState.
     *
-    * @param MC         Id of the session
     * @param outliers Current State
-    * @param PD    Is the session active or expired
     */
   case class SessionUpdate(
-                            outliers: Int,
-                            MC: Int,
-                            PD: Int)
+              outliers: String,
+              slide: String
+                          )
 
 }
