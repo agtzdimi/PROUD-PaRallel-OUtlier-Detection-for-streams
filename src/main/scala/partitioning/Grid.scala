@@ -30,6 +30,12 @@ object Grid {
         list.+=((p, new Data_basis(point.id, point.value, point.arrival, 1)))
       })
     }
+    val numbers = list.map(_._1)
+    1 to partitions foreach { i =>
+     if (!numbers.contains(i)) {
+       list.+=((i, new Data_basis(point.id, point.value, point.arrival, 2)))
+     }
+    }
     list
   }
 

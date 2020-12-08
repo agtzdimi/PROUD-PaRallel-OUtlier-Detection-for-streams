@@ -331,7 +331,10 @@ object Outlier_detection {
     var prevState = state.getOption.getOrElse {
       ListBuffer[(Int,Data_mcod)]()
     }
-    val inputList = values.toList
+    var inputList = values.toList
+    if(inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+      inputList.to[ListBuffer].clear()
+    }
     prevState = prevState ++ inputList.to[ListBuffer]
     state.update(prevState)
    /* val slide = (inputList.head._2.arrival / 500).floor.toInt
@@ -365,7 +368,7 @@ object Outlier_detection {
     */
   case class SessionUpdate(
               outliers: String,
-              slide: String
+              partition: String
                           )
 
 }
