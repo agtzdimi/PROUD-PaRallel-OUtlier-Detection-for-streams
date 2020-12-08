@@ -289,14 +289,14 @@ object Outlier_detection {
 
     val output_data = out
       .withColumn("timestamp",current_timestamp())
-      .withWatermark("timestamp","2 seconds")
+      .withWatermark("timestamp","500 millisecond")
       .groupBy("timestamp")
       .agg(functions.sum("outliers").as("Final Outliers"))
 
 
     val outliers = output_data
       .writeStream
-      .trigger(Trigger.ProcessingTime("2 seconds"))
+      .trigger(Trigger.ProcessingTime("2 millisecond"))
       .outputMode("append")
       .format("console")
       .option("truncate", "false")
@@ -327,21 +327,21 @@ object Outlier_detection {
     Right(sb.toString())
   }
 
-  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]): Iterator[SessionUpdate] = {
-    val prevState = state.getOption.getOrElse {
-      val PD = mutable.HashMap[Int, Data_mcod]()
-      val MC = mutable.HashMap[Int, MicroCluster]()
-      PmcodState(PD, MC)
+  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[ListBuffer[(Int,Data_mcod)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int,Data_mcod)]()
     }
-    val now = Calendar.getInstance()
-    val t = now.getTimeInMillis
-    val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-    var counter = 1
+    val inputList = values.toList
+    prevState = prevState ++ inputList.to[ListBuffer]
+    state.update(prevState)
+   /* val slide = (inputList.head._2.arrival / 500).floor.toInt
+    windowStart = 500 * slide
+    windowEnd = 500 + windowStart*/
     // create the date/time formatters
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
-      .process(values, windowEnd, windowStart, prevState)
-    state.update(outliers._1)
-    Iterator(SessionUpdate(outliers._2.outliers.toString, key.toString))
+      .process(prevState, windowEnd, windowStart)
+
+    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
   }
 
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))

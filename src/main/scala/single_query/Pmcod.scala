@@ -22,10 +22,12 @@ class Pmcod(c_query: Query) {
   val k: Int = query.k
   var mc_counter: Int = 1
 
-  def process(elements: Iterator[(Int, Data_mcod)], windowEnd: Long, windowStart: Long, inpState: PmcodState):(PmcodState,Query) = {
+  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long):Query = {
     
     val time_init = System.currentTimeMillis()
-    state = inpState
+    val PD = mutable.HashMap[Int, Data_mcod]()
+    val MC = mutable.HashMap[Int, MicroCluster]()
+    state = PmcodState(PD, MC)
 
     val inputList = elements.toList
     //insert new elements
@@ -45,7 +47,7 @@ class Pmcod(c_query: Query) {
 
     val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
 
-    //Remove old points
+   /* //Remove old points
     var deletedMCs = mutable.HashSet[Int]()
     inputList
       .filter(p => p._2.arrival < windowStart + slide)
@@ -65,12 +67,12 @@ class Pmcod(c_query: Query) {
 
       //Reinsert points from deleted MCs
       reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
-    }
+    }*/
 
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
-    (state,tmpQuery)
+    tmpQuery
   }
 
   def insertPoint(el: Data_mcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null): Unit = {
