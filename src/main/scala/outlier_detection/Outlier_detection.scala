@@ -36,6 +36,7 @@ object Outlier_detection {
   var myQueriesGlobal = new ListBuffer[Query]()
   var windowStart: Long = 0
   var windowEnd: Long = 500
+  var win = 500
 
   def main(args: Array[String]) {
 
@@ -335,11 +336,18 @@ object Outlier_detection {
     if(inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
     }
-    prevState = prevState ++ inputList.to[ListBuffer]
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / 500).floor.toInt * 500
+    if(inputListBuffer.head._2.arrival > 9500) {
+      prevState.foreach(rec => {
+        if(rec._2.arrival < slide - 9500) {
+          prevState -= rec
+        }
+      })
+    }
     state.update(prevState)
-   /* val slide = (inputList.head._2.arrival / 500).floor.toInt
-    windowStart = 500 * slide
-    windowEnd = 500 + windowStart*/
+    println(prevState.size,slide)
     // create the date/time formatters
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
