@@ -347,7 +347,6 @@ object Outlier_detection {
       })
     }
     state.update(prevState)
-    println(prevState.size,slide)
     // create the date/time formatters
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
