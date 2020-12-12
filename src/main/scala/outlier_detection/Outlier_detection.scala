@@ -31,12 +31,13 @@ import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
 
-  val delimiter = ";"
+  val delimiter = ","
   val line_delimeter = '&'
   var myQueriesGlobal = new ListBuffer[Query]()
   var windowStart: Long = 0
   var windowEnd: Long = 500
-  var win = 500
+  var windowSize: Int = 10000
+  var slideSize: Int = 500
 
   def main(args: Array[String]) {
 
@@ -166,6 +167,8 @@ object Outlier_detection {
     val common_W = if (arguments.W.length > 1) arguments.W.max else arguments.W.head
     val common_S = if (arguments.S.length > 1) find_gcd(arguments.S) else arguments.S.head
     val common_R = if (arguments.R.length > 1) arguments.R.max else arguments.R.head
+    windowSize = common_W
+    slideSize = common_S
     //Variable to allow late data points within the specific time be ingested by the job
     val allowed_lateness = common_S
 
@@ -180,7 +183,7 @@ object Outlier_detection {
     myQueriesGlobal = myQueries
     //Create the tree for the specified partitioning type
     val myTree = if (arguments.partitioning == "tree") {
-      val tree_input = s"$file_input/$arguments.dataset/tree_input.txt"
+      val tree_input = s"/home/dimitris/inputs/splits/treeSTK/tree_input.txt"
       new Tree_partitioning(arguments.tree_init, partitions, tree_input)
     }
     else null
@@ -261,13 +264,13 @@ object Outlier_detection {
       .selectExpr("CAST(value AS STRING)")
       .map(record => {
         val id = record.get(0).toString.split(line_delimeter)(0).toInt
-/*
-        val value = record.get(0).toString.split(line_delimeter)(1).toDouble.to[ListBuffer]
-*/
-        val valueList = ListBuffer[Double]()
-        valueList += record.get(0).toString.split(line_delimeter)(1).toDouble
+        val value = record.get(0).toString
+          .split(line_delimeter)(1).toString
+          .split(delimiter)
+          .map(_.toDouble)
+          .to[ListBuffer]
         val timestamp = id.toLong
-        new Data_basis(id, valueList, timestamp, 0)
+        new Data_basis(id, value, timestamp, 0)
       })
     //Start partitioning
     val partitioned_data = arguments.partitioning match {
@@ -290,14 +293,14 @@ object Outlier_detection {
 
     val output_data = out
       .withColumn("timestamp",current_timestamp())
-      .withWatermark("timestamp","500 millisecond")
+      .withWatermark("timestamp",s"${slideSize} millisecond")
       .groupBy("timestamp")
       .agg(functions.sum("outliers").as("Final Outliers"))
 
 
     val outliers = output_data
       .writeStream
-      .trigger(Trigger.ProcessingTime("2 millisecond"))
+      //.trigger(Trigger.ProcessingTime("2 millisecond"))
       .outputMode("append")
       .format("console")
       .option("truncate", "false")
@@ -338,10 +341,10 @@ object Outlier_detection {
     }
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
-    val slide = (inputListBuffer.head._2.arrival / 500).floor.toInt * 500
-    if(inputListBuffer.head._2.arrival > 9500) {
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+    if(inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
       prevState.foreach(rec => {
-        if(rec._2.arrival < slide - 9500) {
+        if(rec._2.arrival < slide - (windowSize - slideSize)) {
           prevState -= rec
         }
       })
