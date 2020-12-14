@@ -60,34 +60,6 @@ class Slicing(c_query: Query) {
     val myTrees = mutable.HashMap[Long, MTree[Data_slicing]]((latest_slide, myTree))
     var current = SlicingState(myTrees, myTrigger)
 
-    //populate mtree
-    if (current == null) {
-      var myTrigger = mutable.HashMap[Long, mutable.Set[Int]]()
-      myTrigger.+=((outliers_trigger, mutable.Set()))
-      var next_slide = windowStart
-      while(next_slide <= windowEnd - slide){
-        myTrigger.+=((next_slide, mutable.Set()))
-        next_slide += slide
-      }
-      for (el <- inputList) {
-        myTree.add(el._2)
-      }
-      val myTrees = mutable.HashMap[Long, MTree[Data_slicing]]((latest_slide, myTree))
-      current = SlicingState(myTrees, myTrigger)
-    } else {
-      inputList
-        .filter(el => el._2.arrival >= windowEnd - slide)
-        .foreach(el => {
-          myTree.add(el._2)
-        })
-      var max = current.triggers.keySet.max + slide
-      while (max <= windowEnd - slide){
-        current.triggers.+=((max, mutable.Set[Int]()))
-        max += slide
-      }
-      current.trees.+=((latest_slide, myTree))
-    }
-
     //Trigger leftover slides
     val slow_triggers = current.triggers.keySet.filter(p => p < windowStart && p!= -1L).toList
     for(slow <- slow_triggers){
@@ -162,7 +134,6 @@ class Slicing(c_query: Query) {
     }
     if (neigh_counter < k) {
       current.triggers(outliers_trigger).+=(point.id)
-      println(point)
     }
   }
 

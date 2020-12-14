@@ -195,7 +195,7 @@ object Outlier_detection {
 
     println(arguments.DEBUG)
     println(kafka_brokers)
-    println(kafka_topic)
+    println(arguments.algorithm)
     val data = if (arguments.DEBUG) {
       val myInput = s"$file_input"
       val debugFile = spark.readStream
