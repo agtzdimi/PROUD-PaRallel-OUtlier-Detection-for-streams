@@ -3,9 +3,27 @@ package models
 import mtree.DistanceFunctions.EuclideanCoordinate
 
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 
-class Data_slicing(c_point: Data_basis) extends Data_basis(c_point.id, c_point.value, c_point.arrival, c_point.flag) with EuclideanCoordinate with Comparable[Data_slicing] with Ordered[Data_slicing]  {
+object ExtraDataFrameOperationsSlicing {
+  object implicits {
+    implicit def dFWithExtraOperations(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) = Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int)
+  }
+}
 
+case class Data_slicing(c_point: Data_basis) extends Serializable with EuclideanCoordinate with Comparable[Data_slicing] with Ordered[Data_slicing]  {
+
+  //Micro-cluster data
+  var mc: Int = -1
+  var Rmc = mutable.HashSet[Int]()
+  val id: Int = c_point.c_id
+  val value: ListBuffer[Double] = c_point.c_val
+  val dimensions: Int = value.length
+  var arrival: Long = c_point.c_arrival
+  val flag: Int = c_point.c_flag
+  val state: Seq[ListBuffer[Double]] = Seq(value)
+  val hashcode: Int = state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
+  var nn_before = ListBuffer[Long]()
   //Neighbor data
   var count_after: Int = 0
   var slices_before: mutable.HashMap[Long, Int] = mutable.HashMap[Long, Int]()

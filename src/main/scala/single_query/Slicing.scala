@@ -21,13 +21,13 @@ class Slicing(c_query: Query) {
   val k: Int = query.k
   val outliers_trigger: Long = -1L
 
-  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
+  def process(elements: ListBuffer[(Int, Data_slicing)], windowEnd: Long, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val inputList = elements.rdd.collect().toList.toIterable
+    val inputList = elements
     //new variables
     val latest_slide = windowEnd - slide
     val nonRandomPromotion = new PromotionFunction[Data_slicing] {

@@ -22,9 +22,9 @@ import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
-import single_query.{MicroCluster, PmcodState}
+import single_query.{MicroCluster, PmcodState, Slicing}
 import utils.Helpers.find_gcd
-import utils.Utils.Query
+import utils.Utils.{GroupMetadataNaive, Query}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -285,11 +285,23 @@ object Outlier_detection {
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
     }
 
-    val out = partitioned_data
-      .map(record => (record._1, new Data_mcod(record._2)))
-      .groupByKey(_._1)
-      .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
-      .toDF()
+    val out = arguments.algorithm match {
+      case "pmcod" =>
+        partitioned_data.map(record => (record._1, new Data_mcod(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
+          .toDF()
+      case "advanced_extended" =>
+        partitioned_data.map(record => (record._1, new Data_advanced(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePointsAdvancedExt)
+          .toDF()
+      case "slicing" =>
+        partitioned_data.map(record => (record._1, new Data_slicing(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePointsSlicing)
+          .toDF()
+    }
 
     val output_data = out
       .withColumn("timestamp",current_timestamp())
@@ -300,7 +312,6 @@ object Outlier_detection {
 
     val outliers = output_data
       .writeStream
-      //.trigger(Trigger.ProcessingTime("2 millisecond"))
       .outputMode("append")
       .format("console")
       .option("truncate", "false")
@@ -353,6 +364,57 @@ object Outlier_detection {
     // create the date/time formatters
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
+
+    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
+  }
+
+  def updatePointsSlicing(key: Int, values: Iterator[(Int, Data_slicing)], state: GroupState[ListBuffer[(Int,Data_slicing)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int,Data_slicing)]()
+    }
+    var inputList = values.toList
+    if(inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+      inputList.to[ListBuffer].clear()
+    }
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+    if(inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+      prevState.foreach(rec => {
+        if(rec._2.arrival < slide - (windowSize - slideSize)) {
+          prevState -= rec
+        }
+      })
+    }
+    state.update(prevState)
+    // create the date/time formatters
+    val outliers = new Slicing(myQueriesGlobal.head)
+      .process(prevState, windowEnd, windowStart)
+
+    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
+  }
+
+  def updatePointsAdvancedExt(key: Int, values: Iterator[(Int, Data_advanced)], state: GroupState[ListBuffer[(Int,Data_advanced)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int,Data_advanced)]()
+    }
+    var inputList = values.toList
+    if(inputList.size == 1 && inputList(0)._2.flag == 2) {
+      inputList.to[ListBuffer].clear()
+    }
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+
+    prevState.foreach(rec => {
+      if((rec._2.arrival < slide - (windowSize - slideSize) || rec._2.flag == 1) && slide != 0) {
+        prevState -= rec
+      }
+    })
+    state.update(prevState)
+    // create the date/time formatters
+    val outliers = new single_query.Advanced_extended(myQueriesGlobal.head)
+      .process(prevState, (slide + windowSize), (slide + slideSize))
 
     Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
   }

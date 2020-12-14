@@ -52,7 +52,7 @@ case class Data_mcod(c_point: Data_basis) extends Serializable {
     else nn_before.filter(_ >= time).min
   }
 
-  def compareTo(t: Data_basis): Int = {
+  def compareTo(t: Data_naive): Int = {
     val dim = Math.min(this.dimensions, t.dimensions)
     for (i <- 0 until dim) {
       if (this.value(i) > t.value(i)) +1

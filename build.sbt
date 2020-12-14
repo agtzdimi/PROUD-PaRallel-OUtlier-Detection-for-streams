@@ -3,6 +3,14 @@ ThisBuild / organization := "org.auth.csd.datalab"
 ThisBuild / scalaVersion := "2.12.12"
 
 val sparkVersion = "2.4.5"
+assemblyMergeStrategy in assembly := {
+  case PathList("net", "sf", "cglib", ps @ _*) => MergeStrategy.discard
+  case "asm-license.txt" => MergeStrategy.discard
+  case x =>
+    val old = (assemblyMergeStrategy in assembly).value
+    old(x)
+}
+
 
 lazy val root = (project in file(".")).
   settings(

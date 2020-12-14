@@ -20,13 +20,13 @@ class Advanced_extended(c_query: Query) {
   val R: Double = query.R
   val k: Int = query.k
 
-  def process(elements: Dataset[(Int, Data_advanced)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
+  def process(elements: ListBuffer[(Int, Data_advanced)], windowEnd: Long, windowStart: Long):Query = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val inputList = elements.rdd.collect().toList.toIterable
+    val inputList = elements
 
     //populate Mtree
     val nonRandomPromotion = new PromotionFunction[Data_advanced] {
@@ -51,41 +51,14 @@ class Advanced_extended(c_query: Query) {
       myHash.+=((el._2.id, el._2))
     }
     var current = AdvancedExtState(myTree, myHash)
-    if (current == null) {
-      val nonRandomPromotion = new PromotionFunction[Data_advanced] {
-        /**
-          * Chooses (promotes) a pair of objects according to some criteria that is
-          * suitable for the application using the M-Tree.
-          *
-          * @param dataSet          The set of objects to choose a pair from.
-          * @param distanceFunction A function that can be used for choosing the
-          *                         promoted objects.
-          * @return A pair of chosen objects.
-          */
-        override def process(dataSet: java.util.Set[Data_advanced], distanceFunction: DistanceFunction[_ >: Data_advanced]): utils.Pair[Data_advanced] = {
-          utils.Utils.minMax[Data_advanced](dataSet)
-        }
-      }
-      val mySplit = new ComposedSplitFunction[Data_advanced](nonRandomPromotion, new PartitionFunctions.BalancedPartition[Data_advanced])
-      val myTree = new MTree[Data_advanced](k, DistanceFunctions.EUCLIDEAN, mySplit)
-      var myHash = new mutable.HashMap[Int, Data_advanced]()
-      for (el <- inputList) {
-        myTree.add(el._2)
-        myHash.+=((el._2.id, el._2))
-      }
-      current = AdvancedExtState(myTree, myHash)
-    } else {
       inputList
-        .filter(el => el._2.arrival >= windowEnd - slide)
         .foreach(el => {
           current.tree.add(el._2)
           current.hashMap.+=((el._2.id, el._2))
         })
-    }
 
     //Get neighbors
     inputList
-      .filter(p => p._2.arrival >= (windowEnd - slide))
       .foreach(p => {
         val tmpData = p._2
         val query: MTree[Data_advanced]#Query = current.tree.getNearestByRange(tmpData, R)
@@ -126,14 +99,6 @@ class Advanced_extended(c_query: Query) {
     val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
 
     var iter = ListBuffer[Data_advanced]();
-    //Remove expiring objects and flagged ones from state
-    inputList
-      .filter(el => el._2.arrival < windowStart + slide) // start TODO
-      .foreach(el => {
-        current.tree.remove(el._2)
-        current.hashMap.-=(el._2.id)
-        iter += el._2
-      })
 
     //Metrics
     val time_final = System.currentTimeMillis()

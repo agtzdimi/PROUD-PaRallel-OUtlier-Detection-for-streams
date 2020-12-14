@@ -2,13 +2,26 @@ package models
 
 import scala.collection.mutable.ListBuffer
 
-class Data_naive(c_point: Data_basis) extends Data_basis(c_point.id, c_point.value, c_point.arrival, c_point.flag) {
+object ExtraDataFrameOperationsNaive {
+  object implicits {
+    implicit def dFWithExtraOperations(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) = Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int)
+  }
+}
+
+case class Data_naive(c_point: Data_basis) extends Serializable {
 
   //Neighbor data
   var count_after: Int = 0
   var nn_before = ListBuffer[Long]()
   //Skip flag
   var safe_inlier: Boolean = false
+  val id: Int = c_point.c_id
+  val value: ListBuffer[Double] = c_point.c_val
+  val dimensions: Int = value.length
+  var arrival: Long = c_point.c_arrival
+  val flag: Int = c_point.c_flag
+  val state: Seq[ListBuffer[Double]] = Seq(value)
+  val hashcode: Int = state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
 
   //Function to insert data as a preceding neighbor (max k neighbors)
   def insert_nn_before(el: Long, k: Int = 0): Unit = {
@@ -34,5 +47,16 @@ class Data_naive(c_point: Data_basis) extends Data_basis(c_point.id, c_point.val
     nn_before.clear()
     count_after = 0
   }
+  def compareTo(t: Data_naive): Int = {
+    val dim = Math.min(this.dimensions, t.dimensions)
+    for (i <- 0 until dim) {
+      if (this.value(i) > t.value(i)) +1
+      else if (this.value(i) < t.value(i)) -1
+      else 0
+    }
+    if (this.dimensions > dim) +1
+    else -1
+  }
+  override def toString = s"Data_naive($id, $value, $arrival, $flag)"
 
 }
