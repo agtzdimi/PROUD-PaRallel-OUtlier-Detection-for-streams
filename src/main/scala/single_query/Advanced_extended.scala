@@ -1,9 +1,8 @@
 package single_query
 
-import utils.Utils.Query
 import models.Data_advanced
+import utils.Utils.Query
 import mtree.{utils, _}
-import org.apache.spark.sql.{Dataset, SparkSession}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -12,15 +11,14 @@ case class AdvancedExtState(var tree: MTree[Data_advanced], var hashMap: mutable
 
 class Advanced_extended(c_query: Query) {
 
-  @transient private var counter: Int = _
-  @transient private var cpu_time: Long = 0L
-
   val query: Query = c_query
   val slide: Int = query.S
   val R: Double = query.R
   val k: Int = query.k
+  @transient private var counter: Int = _
+  @transient private var cpu_time: Long = 0L
 
-  def process(elements: ListBuffer[(Int, Data_advanced)], windowEnd: Long, windowStart: Long):Query = {
+  def process(elements: ListBuffer[(Int, Data_advanced)], windowEnd: Long, windowStart: Long): Query = {
 
     //Metrics
     counter += 1
@@ -50,12 +48,7 @@ class Advanced_extended(c_query: Query) {
       myTree.add(el._2)
       myHash.+=((el._2.id, el._2))
     }
-    var current = AdvancedExtState(myTree, myHash)
-      inputList
-        .foreach(el => {
-          current.tree.add(el._2)
-          current.hashMap.+=((el._2.id, el._2))
-        })
+    val current = AdvancedExtState(myTree, myHash)
 
     //Get neighbors
     inputList
@@ -91,12 +84,12 @@ class Advanced_extended(c_query: Query) {
 
     current.hashMap.values.foreach(p => {
       if (p.flag == 0 && !p.safe_inlier) {
-        val nnBefore = p.nn_before.count(_ >= windowStart) // start TODO
+        val nnBefore = p.nn_before.count(_ >= windowStart)
         if (p.count_after + nnBefore < k) outliers += 1
       }
     })
 
-    val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+    val tmpQuery = Query(query.R, query.k, query.W, query.S, outliers)
 
     var iter = ListBuffer[Data_advanced]();
 

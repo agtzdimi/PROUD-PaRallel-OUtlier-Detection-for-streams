@@ -1,29 +1,29 @@
 package single_query
 
-import utils.Utils.Query
-import utils.Helpers.distance
 import models.Data_mcod
+import utils.Helpers.distance
+import utils.Utils.Query
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 case class MicroCluster(var center: ListBuffer[Double], var points: ListBuffer[Data_mcod])
+
 case class PmcodState(var PD: mutable.HashMap[Int, Data_mcod], var MC: mutable.HashMap[Int, MicroCluster])
 
 class Pmcod(c_query: Query) {
-
-  @transient private var counter: Int = _
-  var state: PmcodState = PmcodState(mutable.HashMap[Int, Data_mcod](), mutable.HashMap[Int, MicroCluster]())
-  @transient private var cpu_time: Long = 0L
 
   val query: Query = c_query
   val slide: Int = query.S
   val R: Double = query.R
   val k: Int = query.k
+  var state: PmcodState = PmcodState(mutable.HashMap[Int, Data_mcod](), mutable.HashMap[Int, MicroCluster]())
   var mc_counter: Int = 1
+  @transient private var counter: Int = _
+  @transient private var cpu_time: Long = 0L
 
-  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long):Query = {
-    
+  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long): Query = {
+
     val time_init = System.currentTimeMillis()
     val PD = mutable.HashMap[Int, Data_mcod]()
     val MC = mutable.HashMap[Int, MicroCluster]()
@@ -34,7 +34,8 @@ class Pmcod(c_query: Query) {
     inputList
       .foreach(p => {
         insertPoint(p._2, true
-      )})
+        )
+      })
 
     //Find outliers
     var outliers = 0
@@ -45,29 +46,29 @@ class Pmcod(c_query: Query) {
         }
     })
 
-    val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+    val tmpQuery = Query(query.R, query.k, query.W, query.S, outliers)
 
-   /* //Remove old points
-    var deletedMCs = mutable.HashSet[Int]()
-    inputList
-      .filter(p => p._2.arrival < windowStart + slide)
-      .foreach(p => {
-        val delete = deletePoint(p._2)
-        if (delete > 0) deletedMCs += delete
-      })
+    /* //Remove old points
+     var deletedMCs = mutable.HashSet[Int]()
+     inputList
+       .filter(p => p._2.arrival < windowStart + slide)
+       .foreach(p => {
+         val delete = deletePoint(p._2)
+         if (delete > 0) deletedMCs += delete
+       })
 
-    //Delete MCs
-    if (deletedMCs.nonEmpty) {
-      var reinsert = ListBuffer[Data_mcod]()
-      deletedMCs.foreach(mc => {
-        reinsert = reinsert ++ state.MC(mc).points
-        state.MC.remove(mc)
-      })
-      val reinsertIndexes = reinsert.map(_.id)
+     //Delete MCs
+     if (deletedMCs.nonEmpty) {
+       var reinsert = ListBuffer[Data_mcod]()
+       deletedMCs.foreach(mc => {
+         reinsert = reinsert ++ state.MC(mc).points
+         state.MC.remove(mc)
+       })
+       val reinsertIndexes = reinsert.map(_.id)
 
-      //Reinsert points from deleted MCs
-      reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
-    }*/
+       //Reinsert points from deleted MCs
+       reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
+     }*/
 
     //Metrics
     val time_final = System.currentTimeMillis()
@@ -135,17 +136,6 @@ class Pmcod(c_query: Query) {
     }
   }
 
-  def deletePoint(el: Data_mcod): Int = {
-    var res = 0
-    if (el.mc <= 0) { //Delete it from PD
-      state.PD.remove(el.id)
-    } else {
-      state.MC(el.mc).points -= el
-      if (state.MC(el.mc).points.size <= k) res = el.mc
-    }
-    res
-  }
-
   def createMC(el: Data_mcod, NC: ListBuffer[Data_mcod], NNC: ListBuffer[Data_mcod]): Unit = {
     NC.foreach(p => {
       p.clear(mc_counter)
@@ -178,6 +168,15 @@ class Pmcod(c_query: Query) {
     }
   }
 
+  def addNeighbor(el: Data_mcod, neigh: Data_mcod): Unit = {
+    if (el.arrival > neigh.arrival) {
+      el.insert_nn_before(neigh.arrival, k)
+    } else {
+      el.count_after += 1
+      if (el.count_after >= k) el.safe_inlier = true
+    }
+  }
+
   def findCloseMCs(el: Data_mcod): mutable.HashMap[Int, Double] = {
     val res = mutable.HashMap[Int, Double]()
     state.MC.foreach(mc => {
@@ -187,12 +186,14 @@ class Pmcod(c_query: Query) {
     res
   }
 
-  def addNeighbor(el: Data_mcod, neigh: Data_mcod): Unit = {
-    if (el.arrival > neigh.arrival) {
-      el.insert_nn_before(neigh.arrival, k)
+  def deletePoint(el: Data_mcod): Int = {
+    var res = 0
+    if (el.mc <= 0) { //Delete it from PD
+      state.PD.remove(el.id)
     } else {
-      el.count_after += 1
-      if (el.count_after >= k) el.safe_inlier = true
+      state.MC(el.mc).points -= el
+      if (state.MC(el.mc).points.size <= k) res = el.mc
     }
+    res
   }
 }

@@ -1,32 +1,27 @@
 package outlier_detection
 
 import java.sql.Timestamp
-import java.text.SimpleDateFormat
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.{ChronoField, TemporalAccessor}
-import java.util.Calendar
 
-import breeze.linalg.sum
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.functions.{col, current_timestamp, lit, typedLit, window}
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.functions.current_timestamp
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode}
 import org.apache.spark.sql.{Row, SparkSession, functions}
+import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
-import single_query.{MicroCluster, PmcodState, Slicing}
+import single_query.{Advanced_extended, Slicing}
 import utils.Helpers.find_gcd
-import utils.Utils.{GroupMetadataNaive, Query}
+import utils.Utils.Query
 
-import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
@@ -253,12 +248,12 @@ object Outlier_detection {
 
     import spark.implicits._
 
-/*    var key: Int = 0
-    val windowedData = data
-      //.withColumn("timestamp", lit(current_timestamp()))
-      .withColumn("timestamp", $"timestamp".cast(TimestampType))
-      .withWatermark("timestamp", s"$common_W millisecond")
-      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")*/
+    /*    var key: Int = 0
+        val windowedData = data
+          //.withColumn("timestamp", lit(current_timestamp()))
+          .withColumn("timestamp", $"timestamp".cast(TimestampType))
+          .withWatermark("timestamp", s"$common_W millisecond")
+          .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")*/
 
     val data2 = data
       .selectExpr("CAST(value AS STRING)")
@@ -304,8 +299,8 @@ object Outlier_detection {
     }
 
     val output_data = out
-      .withColumn("timestamp",current_timestamp())
-      .withWatermark("timestamp",s"${slideSize} millisecond")
+      .withColumn("timestamp", current_timestamp())
+      .withWatermark("timestamp", s"${slideSize} millisecond")
       .groupBy("timestamp")
       .agg(functions.sum("outliers").as("Final Outliers"))
 
@@ -342,20 +337,20 @@ object Outlier_detection {
     Right(sb.toString())
   }
 
-  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[ListBuffer[(Int,Data_mcod)]]): Iterator[SessionUpdate] = {
+  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[ListBuffer[(Int, Data_mcod)]]): Iterator[SessionUpdate] = {
     var prevState = state.getOption.getOrElse {
-      ListBuffer[(Int,Data_mcod)]()
+      ListBuffer[(Int, Data_mcod)]()
     }
     var inputList = values.toList
-    if(inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
     }
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
-    if(inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
       prevState.foreach(rec => {
-        if(rec._2.arrival < slide - (windowSize - slideSize)) {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
           prevState -= rec
         }
       })
@@ -368,20 +363,20 @@ object Outlier_detection {
     Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
   }
 
-  def updatePointsSlicing(key: Int, values: Iterator[(Int, Data_slicing)], state: GroupState[ListBuffer[(Int,Data_slicing)]]): Iterator[SessionUpdate] = {
+  def updatePointsSlicing(key: Int, values: Iterator[(Int, Data_slicing)], state: GroupState[ListBuffer[(Int, Data_slicing)]]): Iterator[SessionUpdate] = {
     var prevState = state.getOption.getOrElse {
-      ListBuffer[(Int,Data_slicing)]()
+      ListBuffer[(Int, Data_slicing)]()
     }
     var inputList = values.toList
-    if(inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
     }
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
-    if(inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
       prevState.foreach(rec => {
-        if(rec._2.arrival < slide - (windowSize - slideSize)) {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
           prevState -= rec
         }
       })
@@ -394,27 +389,28 @@ object Outlier_detection {
     Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
   }
 
-  def updatePointsAdvancedExt(key: Int, values: Iterator[(Int, Data_advanced)], state: GroupState[ListBuffer[(Int,Data_advanced)]]): Iterator[SessionUpdate] = {
+  def updatePointsAdvancedExt(key: Int, values: Iterator[(Int, Data_advanced)], state: GroupState[ListBuffer[(Int, Data_advanced)]]): Iterator[SessionUpdate] = {
     var prevState = state.getOption.getOrElse {
-      ListBuffer[(Int,Data_advanced)]()
+      ListBuffer[(Int, Data_advanced)]()
     }
     var inputList = values.toList
-    if(inputList.size == 1 && inputList(0)._2.flag == 2) {
+    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
     }
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
-
-    prevState.foreach(rec => {
-      if((rec._2.arrival < slide - (windowSize - slideSize) || rec._2.flag == 1) && slide != 0) {
-        prevState -= rec
-      }
-    })
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+      prevState.foreach(rec => {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
+          prevState -= rec
+        }
+      })
+    }
     state.update(prevState)
     // create the date/time formatters
-    val outliers = new single_query.Advanced_extended(myQueriesGlobal.head)
-      .process(prevState, (slide + windowSize), (slide + slideSize))
+    val outliers = new Advanced_extended(myQueriesGlobal.head)
+      .process(prevState, windowEnd, windowStart)
 
     Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
   }
@@ -439,8 +435,8 @@ object Outlier_detection {
     * @param outliers Current State
     */
   case class SessionUpdate(
-              outliers: String,
-              partition: String
+                            outliers: String,
+                            partition: String
                           )
 
 }
