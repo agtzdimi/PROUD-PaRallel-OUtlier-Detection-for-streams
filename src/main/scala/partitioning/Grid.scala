@@ -9,6 +9,7 @@ object Grid {
   private val delimiter = ";"
   //Hardcoded cell borders for 16 partitions
   private val spatial_tao: Map[Int, String] = Map[Int, String](1 -> "-0.01", 2 -> "79.23;82.47;85.77", 3 -> "26.932")
+  private val spatial_fc = Map[Int, String](1 -> "58.0;127.0;260.0", 2 -> "0.0;71.0;142.0")
   private val spatial_stock: Map[Int, String] = Map[Int, String](
     1 -> "87.231;94.222;96.5;97.633;98.5;99.25;99.897;100.37;101.16;102.13;103.18;104.25;105.25;106.65;109.75")
 
@@ -20,6 +21,7 @@ object Grid {
     val res: (Int, ListBuffer[Int]) = dataset match {
       case "STK" => findPartSTOCK(point.value, range)
       case "TAO" => findPartTAO(point.value, range)
+      case "FC" => findPartFC(point.value, range)
     }
     val belongs_to = res._1
     val neighbors = res._2
@@ -163,6 +165,98 @@ object Grid {
     val partition = belongs_to
     if (next != -1) neighbors.+=(next)
     if (previous != -1) neighbors.+=(previous)
+    (partition, neighbors)
+  }
+
+  def findPartFC(value: ListBuffer[Double], range: Double): (Int, ListBuffer[Int]) = {
+    val points1d = spatial_fc(1).split(delimiter).map(_.toDouble).toList
+    val points2d = spatial_fc(2).split(delimiter).map(_.toDouble).toList
+
+    var belongs_to = ListBuffer[Int](1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+    var neighbors = ListBuffer[Int](1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+    //1st dimension=============================
+    if (value(0) <= points1d(0)) { //it belongs to x1 (1,2,3,4)
+      belongs_to.-=(5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+      neighbors.-=(9, 10, 11, 12, 13, 14, 15, 16) //x3 and x4 are not neighbors
+      if (value(0) >= points1d(0) - range) { //belongs to x2 too
+        //nothing to do
+      } else {
+        neighbors.-=(5, 6, 7, 8)
+      }
+    } else if (value(0) <= points1d(1)) { //it belongs to x2 (5,6,7,8)
+      belongs_to.-=(1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16)
+      neighbors.-=(13, 14, 15, 16) //x4 is not neighbor
+      if (value(0) <= points1d(0) + range) { //belongs to x1 too
+        neighbors.-=(9, 10, 11, 12) //x3 is not neighbor
+      } else if (value(0) >= points1d(1) - range) { //belongs to x3 too
+        neighbors.-=(1, 2, 3, 4) //x1 is not neighbor
+      } else {
+        //x1 and x3 are not neighbors
+        neighbors.-=(1, 2, 3, 4, 9, 10, 11, 12)
+      }
+    } else if (value(0) <= points1d(2)) { //it belongs to x3 (9,10,11,12)
+      belongs_to.-=(1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16)
+      neighbors.-=(1, 2, 3, 4) //x1 is not neighbor
+      if (value(0) <= points1d(1) + range) { //belongs to x2 too
+        neighbors.-=(13, 14, 15, 16) //x4 is not neighbor
+      } else if (value(0) >= points1d(2) - range) { //belongs to x4 too
+        neighbors.-=(5, 6, 7, 8) //x2 is not neighbor
+      } else {
+        //x2 and x4 are not neighbors
+        neighbors.-=(5, 6, 7, 8, 13, 14, 15, 16)
+      }
+    } else { //it belongs to x4 (13,14,15,16)
+      belongs_to.-=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+      neighbors.-=(1, 2, 3, 4, 5, 6, 7, 8) //x1 and x2 are not neighbors
+      if (value(0) <= points1d(2) + range) { //belongs to x3 too
+        //nothing to do
+      } else { //does not belong to x3
+        neighbors.-=(9, 10, 11, 12)
+      }
+    }
+    //2nd dimension=============================
+    if (value(1) <= points2d(0)) { //it belongs to y1 (1,5,9,13)
+      belongs_to.-=(2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16)
+      neighbors.-=(3, 7, 11, 15, 4, 8, 12, 16) //y3 and y4 are not neighbors
+      if (value(1) >= points2d(0) - range) { //belongs to y2 too
+        //nothing to do
+      } else {
+        neighbors.-=(2, 6, 10, 14)
+      }
+    } else if (value(1) <= points2d(1)) { //it belongs to y2 (2,6,10,14)
+      belongs_to.-=(1, 5, 9, 13, 3, 7, 11, 15, 4, 8, 12, 16)
+      neighbors.-=(4, 8, 12, 16) //y4 is not neighbor
+      if (value(1) <= points2d(0) + range) { //belongs to y1 too
+        neighbors.-=(3, 7, 11, 15) //y3 is not neighbor
+      } else if (value(1) >= points2d(1) - range) { //belongs to y3 too
+        neighbors.-=(1, 5, 9, 13) //y1 is not neighbor
+      } else {
+        //y1 and y3 are not neighbors
+        neighbors.-=(1, 5, 9, 13, 3, 7, 11, 15)
+      }
+    } else if (value(1) <= points2d(2)) { //it belongs to y3 (3,7,11,15)
+      belongs_to.-=(1, 5, 9, 13, 2, 6, 10, 14, 4, 8, 12, 16)
+      neighbors.-=(1, 5, 9, 13) //y1 is not neighbor
+      if (value(1) <= points2d(1) + range) { //belongs to y2 too
+        neighbors.-=(4, 8, 12, 16) //y4 is not neighbor
+      } else if (value(1) >= points2d(2) - range) { //belongs to y4 too
+        neighbors.-=(2, 6, 10, 14) //y2 is not neighbor
+      } else {
+        //y2 and y4 are not neighbors
+        neighbors.-=(2, 6, 10, 14, 4, 8, 12, 16)
+      }
+    } else { //it belongs to y4 (4,8,12,16)
+      belongs_to.-=(1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15)
+      neighbors.-=(1, 5, 9, 13, 2, 6, 10, 14) //y1 and y2 are not neighbors
+      if (value(1) <= points2d(2) + range) { //belongs to y3 too
+        //nothing to do
+      } else { //does not belong to y3
+        neighbors.-=(3, 7, 11, 15)
+      }
+    }
+
+    val partition = belongs_to.head
+    neighbors.-=(partition)
     (partition, neighbors)
   }
 

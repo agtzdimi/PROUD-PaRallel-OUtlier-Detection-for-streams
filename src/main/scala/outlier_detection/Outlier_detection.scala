@@ -80,11 +80,11 @@ object Outlier_detection {
           .action((x, c) => c.copy(dataset = x))
           .required()
           .validate(x => {
-            if (x == "TAO" || x == "STK") success
+            if (x == "TAO" || x == "STK" || x == "FC") success
             else failure("dataset property can only be set as [TAO|STK]")
           })
           .text("Represents the dataset selected for the input. Affects the partitioning technique" +
-            "It can either be set to 'TAO' or 'STK'"),
+            "It can either be set to 'TAO', 'STK' or 'FC'"),
         opt[String]("space")
           .action((x, c) => c.copy(space = x))
           .required()
