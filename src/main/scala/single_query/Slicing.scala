@@ -21,7 +21,7 @@ class Slicing(c_query: Query) {
   val k: Int = query.k
   val outliers_trigger: Long = -1L
 
-  def process(elements: ListBuffer[(Int, Data_slicing)], windowEnd: Long, windowStart: Long):Query = {
+  def process(elements: ListBuffer[(Int, Data_slicing)], windowEnd: Long, windowStart: Long):(Query,Long) = {
 
     //Metrics
     counter += 1
@@ -106,7 +106,7 @@ class Slicing(c_query: Query) {
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
 
-    tmpQuery
+    (tmpQuery,cpu_time)
   }
 
   def trigger_point(point: Data_slicing, windowEnd: Long, current: SlicingState, windowStart: Long): Unit = {

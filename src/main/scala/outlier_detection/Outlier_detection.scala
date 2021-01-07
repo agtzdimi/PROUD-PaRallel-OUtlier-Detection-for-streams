@@ -11,7 +11,7 @@ import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.functions.current_timestamp
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode}
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
 import org.apache.spark.sql.{Row, SparkSession, functions}
 import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Grid.grid_partitioning
@@ -302,7 +302,7 @@ object Outlier_detection {
       .withColumn("timestamp", current_timestamp())
       .withWatermark("timestamp", s"${slideSize} millisecond")
       .groupBy("timestamp")
-      .agg(functions.sum("outliers").as("Final Outliers"))
+      .agg(functions.sum("outliers").as("Slide Outliers"))
 
 
     val outliers = output_data
@@ -360,7 +360,7 @@ object Outlier_detection {
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
 
-    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString,outliers._2))
   }
 
   def updatePointsSlicing(key: Int, values: Iterator[(Int, Data_slicing)], state: GroupState[ListBuffer[(Int, Data_slicing)]]): Iterator[SessionUpdate] = {
@@ -386,7 +386,7 @@ object Outlier_detection {
     val outliers = new Slicing(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
 
-    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString,outliers._2))
   }
 
   def updatePointsAdvancedExt(key: Int, values: Iterator[(Int, Data_advanced)], state: GroupState[ListBuffer[(Int, Data_advanced)]]): Iterator[SessionUpdate] = {
@@ -412,7 +412,7 @@ object Outlier_detection {
     val outliers = new Advanced_extended(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
 
-    Iterator(SessionUpdate(outliers.outliers.toString, key.toString))
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString, outliers._2))
   }
 
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
@@ -436,7 +436,8 @@ object Outlier_detection {
     */
   case class SessionUpdate(
                             outliers: String,
-                            partition: String
+                            partition: String,
+                            cpu_time: Long
                           )
 
 }

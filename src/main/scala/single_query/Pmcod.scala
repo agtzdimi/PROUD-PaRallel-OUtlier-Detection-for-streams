@@ -22,7 +22,7 @@ class Pmcod(c_query: Query) {
   @transient private var counter: Int = _
   @transient private var cpu_time: Long = 0L
 
-  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long): Query = {
+  def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long): (Query, Long) = {
 
     val time_init = System.currentTimeMillis()
     val PD = mutable.HashMap[Int, Data_mcod]()
@@ -73,7 +73,7 @@ class Pmcod(c_query: Query) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
-    tmpQuery
+    (tmpQuery,cpu_time)
   }
 
   def insertPoint(el: Data_mcod, newPoint: Boolean, reinsert: ListBuffer[Int] = null): Unit = {

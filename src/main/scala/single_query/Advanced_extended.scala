@@ -18,7 +18,7 @@ class Advanced_extended(c_query: Query) {
   @transient private var counter: Int = _
   @transient private var cpu_time: Long = 0L
 
-  def process(elements: ListBuffer[(Int, Data_advanced)], windowEnd: Long, windowStart: Long): Query = {
+  def process(elements: ListBuffer[(Int, Data_advanced)], windowEnd: Long, windowStart: Long): (Query, Long) = {
 
     //Metrics
     counter += 1
@@ -96,7 +96,7 @@ class Advanced_extended(c_query: Query) {
     //Metrics
     val time_final = System.currentTimeMillis()
     cpu_time += (time_final - time_init)
-    tmpQuery
+    (tmpQuery, cpu_time)
   }
 
 }
