@@ -11,7 +11,8 @@ import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.functions.current_timestamp
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
+import org.apache.spark.sql.streaming.StreamingQueryListener.{QueryProgressEvent, QueryStartedEvent, QueryTerminatedEvent}
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, StreamingQueryListener, Trigger}
 import org.apache.spark.sql.{Row, SparkSession, functions}
 import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Grid.grid_partitioning
@@ -35,20 +36,8 @@ object Outlier_detection {
   var slideSize: Int = 500
 
   def main(args: Array[String]) {
-
-    val conf = new SparkConf().setMaster("local[*]")
-      .setAppName("Data Mining Project").setSparkHome(".")
-    conf.set("spark.driver.memory", "14g")
-    conf.set("spark.hadoop.validateOutputSpecs", "false")
-    conf.set("spark.executor.instances", "1")
-    conf.set("spark.executor.cores", "8")
-    conf.set("spark.executor.memory", "3g")
-    conf.set("spark.cores.max", "8")
-    conf.set("spark.eventLog.enabled", "true")
-    conf.set("spark.eventLog.dir", "spark-logs")
     Logger.getLogger("org").setLevel(Level.ERROR)
     Logger.getLogger("akka").setLevel(Level.ERROR)
-    val sc = new SparkContext(conf)
 
     case class Config(
                        DEBUG: Boolean = false,
@@ -164,6 +153,7 @@ object Outlier_detection {
     val common_R = if (arguments.R.length > 1) arguments.R.max else arguments.R.head
     windowSize = common_W
     slideSize = common_S
+    windowEnd = slideSize
     //Variable to allow late data points within the specific time be ingested by the job
     val allowed_lateness = common_S
 
@@ -192,6 +182,19 @@ object Outlier_detection {
       .master("local[" + partitions + "]")
       .config("spark.sql.streaming.checkpointLocation", "/home/dimitris/checkPointDir")
       .getOrCreate()
+
+    spark.conf.set("spark.sql.legacy.setCommandRejectsSparkCoreConfs","false")
+    spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
+    spark.conf.set("spark.sql.shuffle.partitions", 16)
+    spark.conf.set("spark.eventLog.dir", "spark-logs")
+    /*spark.conf.set("spark.sql.adaptive.enabled", true)*/
+    spark.conf.set("spark.streaming.blockInterval", 100)
+    /*spark.conf.set("spark.streaming.receiver.maxRate",0)*/
+    /*spark.conf.set("spark.shuffle.manager", "tungsten-sort")
+    spark.conf.set("spark.shuffle.unsafe.fastMergeEnabled", "true")*/
+    spark.conf.set("spark.shuffle.compress", false)
+    spark.conf.set("spark.shuffle.spill.compress", false)
+    spark.conf.set("spark.kryo.unsafe", true)
 
     println(arguments.DEBUG)
     println(kafka_brokers)
@@ -302,13 +305,14 @@ object Outlier_detection {
       .withColumn("timestamp", current_timestamp())
       .withWatermark("timestamp", s"${slideSize} millisecond")
       .groupBy("timestamp")
-      .agg(functions.sum("outliers").as("Slide Outliers"))
+      .agg(functions.sum("outliers").as("Total Outliers"))
 
 
     val outliers = output_data
       .writeStream
       .outputMode("append")
-      .format("console")
+      .format("console")        // can be "orc", "json", "csv", etc.
+      /*.option("path", "/home/dimitris/teeeeee")*/
       .option("truncate", "false")
       .start()
 
@@ -344,6 +348,13 @@ object Outlier_detection {
     var inputList = values.toList
     if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
+      var prevOutliers = 0;
+      prevState.foreach(rec => {
+        if (rec._2.safe_inlier) {
+          prevOutliers += 1
+        }
+      })
+      return Iterator(SessionUpdate(prevOutliers.toString, key.toString,0))
     }
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
@@ -357,9 +368,10 @@ object Outlier_detection {
     }
     state.update(prevState)
     // create the date/time formatters
+    var time_final = System.nanoTime()
     val outliers = new single_query.Pmcod(myQueriesGlobal.head)
       .process(prevState, windowEnd, windowStart)
-
+    time_final = System.nanoTime()
     Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString,outliers._2))
   }
 
@@ -439,5 +451,29 @@ object Outlier_detection {
                             partition: String,
                             cpu_time: Long
                           )
+
+  class EventMetric extends StreamingQueryListener{
+    override def onQueryStarted(event: QueryStartedEvent): Unit = {
+    }
+
+    override def onQueryProgress(event: QueryProgressEvent): Unit = {
+      val p = event.progress
+      //    println("id : " + p.id)
+      println("runId : "  + p.runId)
+      //    println("name : " + p.name)
+      println("batchid : " + p.batchId)
+      println("timestamp : " + p.timestamp)
+      println("triggerExecution" + p.durationMs.get("triggerExecution"))
+      println(p.eventTime)
+      println("inputRowsPerSecond : " + p.inputRowsPerSecond)
+      println("numInputRows : " + p.numInputRows)
+      println("processedRowsPerSecond : " + p.processedRowsPerSecond)
+      println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    }
+
+    override def onQueryTerminated(event: QueryTerminatedEvent): Unit = {
+
+    }
+  }
 
 }

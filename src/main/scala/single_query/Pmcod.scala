@@ -24,7 +24,7 @@ class Pmcod(c_query: Query) {
 
   def process(elements: ListBuffer[(Int, Data_mcod)], windowEnd: Long, windowStart: Long): (Query, Long) = {
 
-    val time_init = System.currentTimeMillis()
+    val time_init = System.nanoTime()
     val PD = mutable.HashMap[Int, Data_mcod]()
     val MC = mutable.HashMap[Int, MicroCluster]()
     state = PmcodState(PD, MC)
@@ -71,8 +71,8 @@ class Pmcod(c_query: Query) {
      }*/
 
     //Metrics
-    val time_final = System.currentTimeMillis()
-    cpu_time += (time_final - time_init)
+    val time_final = System.nanoTime()
+    cpu_time = (time_final - time_init)/1000000
     (tmpQuery,cpu_time)
   }
 

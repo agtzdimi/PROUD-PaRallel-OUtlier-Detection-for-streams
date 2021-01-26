@@ -104,7 +104,7 @@ class Slicing(c_query: Query) {
 
     //Metrics
     val time_final = System.currentTimeMillis()
-    cpu_time += (time_final - time_init)
+    cpu_time = time_final - time_init
 
     (tmpQuery,cpu_time)
   }
