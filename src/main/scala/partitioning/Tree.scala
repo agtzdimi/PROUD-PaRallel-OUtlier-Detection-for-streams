@@ -2,7 +2,6 @@ package partitioning
 
 import jvptree.VPTree
 import models.Data_basis
-import org.apache.spark.sql.Row
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer

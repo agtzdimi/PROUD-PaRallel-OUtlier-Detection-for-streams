@@ -32,6 +32,7 @@ class Pmcod(c_query: Query) {
     val inputList = elements.toList
     //insert new elements
     inputList
+      .filter(p => p._2.c_point.c_flag != 2)
       .foreach(p => {
         insertPoint(p._2, true
         )
@@ -47,28 +48,6 @@ class Pmcod(c_query: Query) {
     })
 
     val tmpQuery = Query(query.R, query.k, query.W, query.S, outliers)
-
-    /* //Remove old points
-     var deletedMCs = mutable.HashSet[Int]()
-     inputList
-       .filter(p => p._2.arrival < windowStart + slide)
-       .foreach(p => {
-         val delete = deletePoint(p._2)
-         if (delete > 0) deletedMCs += delete
-       })
-
-     //Delete MCs
-     if (deletedMCs.nonEmpty) {
-       var reinsert = ListBuffer[Data_mcod]()
-       deletedMCs.foreach(mc => {
-         reinsert = reinsert ++ state.MC(mc).points
-         state.MC.remove(mc)
-       })
-       val reinsertIndexes = reinsert.map(_.id)
-
-       //Reinsert points from deleted MCs
-       reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
-     }*/
 
     //Metrics
     val time_final = System.nanoTime()

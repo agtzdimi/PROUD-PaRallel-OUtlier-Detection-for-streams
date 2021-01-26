@@ -24,7 +24,7 @@ class Advanced_extended(c_query: Query) {
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val inputList = elements
+    val inputList = elements.filter(p => p._2.c_point.c_flag != 2)
 
     //populate Mtree
     val nonRandomPromotion = new PromotionFunction[Data_advanced] {

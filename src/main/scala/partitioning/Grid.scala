@@ -16,7 +16,8 @@ object Grid {
   def grid_partitioning(partitions: Int,
                         point: Data_basis,
                         range: Double,
-                        dataset: String): ListBuffer[(Int, Data_basis)] = {
+                        dataset: String,
+                        slideSize: Int): ListBuffer[(Int, Data_basis)] = {
 
     val res: (Int, ListBuffer[Int]) = dataset match {
       case "STK" => findPartSTOCK(point.value, range)
@@ -33,10 +34,12 @@ object Grid {
       })
     }
     val numbers = list.map(_._1)
-    1 to (partitions - 1) foreach { i =>
-     if (!numbers.contains(i)) {
-       list.+=((i, new Data_basis(point.id, point.value, point.arrival, 2)))
-     }
+    if(point.id % slideSize == 0) {
+      0 to (partitions - 1) foreach { i =>
+        if (!numbers.contains(i)) {
+          list.+=((i, new Data_basis(point.id, point.value, point.arrival, 2)))
+        }
+      }
     }
     list
   }

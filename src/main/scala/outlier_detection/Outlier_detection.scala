@@ -277,7 +277,7 @@ object Outlier_detection {
           .flatMap(record => replication_partitioning(partitions, record))
       case "grid" =>
         data2
-          .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
+          .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset, common_S))
       case "tree" =>
         data2
           .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
@@ -346,16 +346,16 @@ object Outlier_detection {
       ListBuffer[(Int, Data_mcod)]()
     }
     var inputList = values.toList
-    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
-      inputList.to[ListBuffer].clear()
-      var prevOutliers = 0;
+    /*inputList = inputList.filter(_._2.c_point.c_flag != 2)
+    if(inputList.isEmpty) {
+      var countOutliers = 0
       prevState.foreach(rec => {
-        if (rec._2.safe_inlier) {
-          prevOutliers += 1
-        }
+        if (rec._2.safe_inlier)
+          countOutliers +=1
       })
-      return Iterator(SessionUpdate(prevOutliers.toString, key.toString,0))
-    }
+      return Iterator(SessionUpdate(countOutliers.toString, key.toString,countOutliers))
+    }*/
+
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
@@ -380,9 +380,9 @@ object Outlier_detection {
       ListBuffer[(Int, Data_slicing)]()
     }
     var inputList = values.toList
-    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+    /*if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
-    }
+    }*/
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
@@ -406,9 +406,9 @@ object Outlier_detection {
       ListBuffer[(Int, Data_advanced)]()
     }
     var inputList = values.toList
-    if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+    /*if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
       inputList.to[ListBuffer].clear()
-    }
+    }*/
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
     val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
