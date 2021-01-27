@@ -30,7 +30,8 @@ object Tree {
 
     def tree_partitioning(partitions: Int,
                           point: Data_basis,
-                          range: Double
+                          range: Double,
+                          slideSize: Int
                          ): ListBuffer[(Int, Data_basis)] = {
       val neighbors: ListBuffer[Int] = {
         val javaList = my_vp_tree.findPartitions(point, range, partitions)
@@ -48,6 +49,14 @@ object Tree {
       if (neighbors.size > 1) {
         for (i <- 1 until neighbors.size) {
           list.+=((neighbors(i), new Data_basis(point.id, point.value, point.arrival, 1)))
+        }
+      }
+      val numbers = list.map(_._1)
+      if(point.id % slideSize == 0) {
+        0 to (partitions - 1) foreach { i =>
+          if (!numbers.contains(i)) {
+            list.+=((i, new Data_basis(point.id, point.value, point.arrival, 2)))
+          }
         }
       }
       list

@@ -168,7 +168,12 @@ object Outlier_detection {
     myQueriesGlobal = myQueries
     //Create the tree for the specified partitioning type
     val myTree = if (arguments.partitioning == "tree") {
-      val tree_input = s"/home/dimitris/inputs/splits/treeSTK/tree_input.txt"
+      var tree_input = s"/home/dimitris/inputs/splits/treeSTK/tree_input.txt"
+      if(arguments.dataset == "TAO") {
+        tree_input = s"/home/dimitris/inputs/splits/taoTree/tao_tree_input.txt"
+      } else if (arguments.dataset == "FC") {
+        tree_input = s"/home/dimitris/inputs/splits/treeFC/tree_input.txt"
+      }
       new Tree_partitioning(arguments.tree_init, partitions, tree_input)
     }
     else null
@@ -187,6 +192,7 @@ object Outlier_detection {
     spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
     spark.conf.set("spark.sql.shuffle.partitions", 16)
     spark.conf.set("spark.eventLog.dir", "spark-logs")
+    spark.conf.set("spark.eventLog.enabled",true)
     /*spark.conf.set("spark.sql.adaptive.enabled", true)*/
     spark.conf.set("spark.streaming.blockInterval", 100)
     /*spark.conf.set("spark.streaming.receiver.maxRate",0)*/
@@ -280,7 +286,7 @@ object Outlier_detection {
           .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset, common_S))
       case "tree" =>
         data2
-          .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
+          .flatMap(record => myTree.tree_partitioning(partitions, record, common_R, common_S))
     }
 
     val out = arguments.algorithm match {
@@ -312,7 +318,7 @@ object Outlier_detection {
       .writeStream
       .outputMode("append")
       .format("console")        // can be "orc", "json", "csv", etc.
-      /*.option("path", "/home/dimitris/teeeeee")*/
+      /*.option("path", "/home/dimitris/outliers")*/
       .option("truncate", "false")
       .start()
 
@@ -346,15 +352,6 @@ object Outlier_detection {
       ListBuffer[(Int, Data_mcod)]()
     }
     var inputList = values.toList
-    /*inputList = inputList.filter(_._2.c_point.c_flag != 2)
-    if(inputList.isEmpty) {
-      var countOutliers = 0
-      prevState.foreach(rec => {
-        if (rec._2.safe_inlier)
-          countOutliers +=1
-      })
-      return Iterator(SessionUpdate(countOutliers.toString, key.toString,countOutliers))
-    }*/
 
     val inputListBuffer = inputList.to[ListBuffer]
     prevState = prevState ++ inputListBuffer
