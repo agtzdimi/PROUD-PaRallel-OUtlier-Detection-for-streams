@@ -23,6 +23,7 @@ import single_query.{Advanced_extended, Slicing}
 import utils.Helpers.find_gcd
 import utils.Utils.Query
 
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {

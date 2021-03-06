@@ -52,6 +52,7 @@ case class Data_mcod(c_point: Data_basis) extends Serializable {
     else nn_before.filter(_ >= time).min
   }
 
+<<<<<< CPU_TOTAL
   def compareTo(t: Data_naive): Int = {
     val dim = Math.min(this.dimensions, t.dimensions)
     for (i <- 0 until dim) {
