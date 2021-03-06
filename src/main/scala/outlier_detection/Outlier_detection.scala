@@ -1,26 +1,25 @@
 package outlier_detection
 
 import java.sql.Timestamp
-import java.text.SimpleDateFormat
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.{ChronoField, TemporalAccessor}
-import java.util.{Calendar, Date}
 
 import com.github.fsanaulla.chronicler.core.model.{InfluxCredentials, InfluxWriter}
 import com.github.fsanaulla.chronicler.spark.core.CallbackHandler
 import com.github.fsanaulla.chronicler.urlhttp.shared.InfluxConfig
 import models._
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.functions.window
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout}
-import org.apache.spark.sql.types.TimestampType
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.functions.current_timestamp
+import org.apache.spark.sql.streaming.StreamingQueryListener.{QueryProgressEvent, QueryStartedEvent, QueryTerminatedEvent}
+import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, StreamingQueryListener, Trigger}
+import org.apache.spark.sql.{Row, SparkSession, functions}
+import org.apache.spark.{SparkConf, SparkContext}
 import partitioning.Grid.grid_partitioning
 import partitioning.Replication.replication_partitioning
 import partitioning.Tree.Tree_partitioning
 import scopt.OParser
-import single_query.{MicroCluster, PmcodState}
+import single_query.{Advanced_extended, Slicing}
 import utils.Helpers.find_gcd
 import utils.Utils.Query
 
@@ -29,26 +28,17 @@ import scala.collection.mutable.ListBuffer
 
 object Outlier_detection {
 
-  val delimiter = ";"
-  val line_delimiter = "&"
+  val delimiter = ","
+  val line_delimeter = '&'
+  var myQueriesGlobal = new ListBuffer[Query]()
+  var windowStart: Long = 0
+  var windowEnd: Long = 500
+  var windowSize: Int = 10000
+  var slideSize: Int = 500
 
   def main(args: Array[String]) {
-
-    /*val conf = new SparkConf().setMaster("local[*]")
-      .setAppName("Data Mining Project").setSparkHome(".")
-    conf.set("spark.driver.memory", "14g")
-    conf.set("spark.hadoop.validateOutputSpecs", "false")
-    conf.set("spark.executor.instances", "1")
-    conf.set("spark.executor.cores", "8")
-    conf.set("spark.executor.memory", "3g")
-    conf.set("spark.cores.max", "8")
-    conf.set("spark.eventLog.enabled", "true")
-    conf.set("spark.eventLog.dir", "spark-logs")*/
     Logger.getLogger("org").setLevel(Level.ERROR)
     Logger.getLogger("akka").setLevel(Level.ERROR)
-    /*val sc = new SparkContext(conf)
-    val ssc = new StreamingContext(sc, Durations.seconds(1))*/
-
 
     case class Config(
                        DEBUG: Boolean = false,
@@ -80,11 +70,11 @@ object Outlier_detection {
           .action((x, c) => c.copy(dataset = x))
           .required()
           .validate(x => {
-            if (x == "TAO" || x == "STK") success
+            if (x == "TAO" || x == "STK" || x == "FC") success
             else failure("dataset property can only be set as [TAO|STK]")
           })
           .text("Represents the dataset selected for the input. Affects the partitioning technique" +
-            "It can either be set to 'TAO' or 'STK'"),
+            "It can either be set to 'TAO', 'STK' or 'FC'"),
         opt[String]("space")
           .action((x, c) => c.copy(space = x))
           .required()
@@ -153,8 +143,6 @@ object Outlier_detection {
 
     //Hardcoded parameter for partitioning and windowing
     val partitions = 16
-    var windowStart: Long = 0
-    var windowEnd: Long = 0
     // Input file
     val file_input = System.getenv("JOB_INPUT") //File input
     // Comma Separated Topics
@@ -164,6 +152,9 @@ object Outlier_detection {
     val common_W = if (arguments.W.length > 1) arguments.W.max else arguments.W.head
     val common_S = if (arguments.S.length > 1) find_gcd(arguments.S) else arguments.S.head
     val common_R = if (arguments.R.length > 1) arguments.R.max else arguments.R.head
+    windowSize = common_W
+    slideSize = common_S
+    windowEnd = slideSize
     //Variable to allow late data points within the specific time be ingested by the job
     val allowed_lateness = common_S
 
@@ -175,9 +166,15 @@ object Outlier_detection {
           for (k <- arguments.k)
             myQueries += Query(r, k, w, s, 0)
 
+    myQueriesGlobal = myQueries
     //Create the tree for the specified partitioning type
     val myTree = if (arguments.partitioning == "tree") {
-      val tree_input = s"$file_input/$arguments.dataset/tree_input.txt"
+      var tree_input = s"/home/dimitris/inputs/splits/treeSTK/tree_input.txt"
+      if(arguments.dataset == "TAO") {
+        tree_input = s"/home/dimitris/inputs/splits/taoTree/tao_tree_input.txt"
+      } else if (arguments.dataset == "FC") {
+        tree_input = s"/home/dimitris/inputs/splits/treeFC/tree_input.txt"
+      }
       new Tree_partitioning(arguments.tree_init, partitions, tree_input)
     }
     else null
@@ -192,9 +189,23 @@ object Outlier_detection {
       .config("spark.sql.streaming.checkpointLocation", "/home/dimitris/checkPointDir")
       .getOrCreate()
 
+    spark.conf.set("spark.sql.legacy.setCommandRejectsSparkCoreConfs","false")
+    spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
+    spark.conf.set("spark.sql.shuffle.partitions", 16)
+    spark.conf.set("spark.eventLog.dir", "spark-logs")
+    spark.conf.set("spark.eventLog.enabled",true)
+    /*spark.conf.set("spark.sql.adaptive.enabled", true)*/
+    spark.conf.set("spark.streaming.blockInterval", 100)
+    /*spark.conf.set("spark.streaming.receiver.maxRate",0)*/
+    /*spark.conf.set("spark.shuffle.manager", "tungsten-sort")
+    spark.conf.set("spark.shuffle.unsafe.fastMergeEnabled", "true")*/
+    spark.conf.set("spark.shuffle.compress", false)
+    spark.conf.set("spark.shuffle.spill.compress", false)
+    spark.conf.set("spark.kryo.unsafe", true)
+
     println(arguments.DEBUG)
     println(kafka_brokers)
-    println(kafka_topic)
+    println(arguments.algorithm)
     val data = if (arguments.DEBUG) {
       val myInput = s"$file_input"
       val debugFile = spark.readStream
@@ -247,151 +258,72 @@ object Outlier_detection {
 
     import spark.implicits._
 
-    var key: Int = 0
-    val windowedData = data
-      //.withColumn("timestamp", lit(current_timestamp()))
-      .withColumn("timestamp", $"timestamp".cast(TimestampType))
-      .withWatermark("timestamp", s"$common_W millisecond")
-      .groupBy(
-        window($"timestamp", s"$common_W millisecond", s"$common_S millisecond"), $"value", $"timestamp"
-      )
-      .agg($"value".cast("String").as("FinalValue"), $"timestamp")
-      .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)", "window")
+    /*    var key: Int = 0
+        val windowedData = data
+          //.withColumn("timestamp", lit(current_timestamp()))
+          .withColumn("timestamp", $"timestamp".cast(TimestampType))
+          .withWatermark("timestamp", s"$common_W millisecond")
+          .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS STRING)")*/
+
+    val data2 = data
+      .selectExpr("CAST(value AS STRING)")
+      .map(record => {
+        val id = record.get(0).toString.split(line_delimeter)(0).toInt
+        val value = record.get(0).toString
+          .split(line_delimeter)(1).toString
+          .split(delimiter)
+          .map(_.toDouble)
+          .to[ListBuffer]
+        val timestamp = id.toLong
+        new Data_basis(id, value, timestamp, 0)
+      })
+    //Start partitioning
+    val partitioned_data = arguments.partitioning match {
+      case "replication" =>
+        data2
+          .flatMap(record => replication_partitioning(partitions, record))
+      case "grid" =>
+        data2
+          .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset, common_S))
+      case "tree" =>
+        data2
+          .flatMap(record => myTree.tree_partitioning(partitions, record, common_R, common_S))
+    }
+
+    val out = arguments.algorithm match {
+      case "pmcod" =>
+        partitioned_data.map(record => (record._1, new Data_mcod(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePoints)
+          .toDF()
+      case "advanced_extended" =>
+        partitioned_data.map(record => (record._1, new Data_advanced(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePointsAdvancedExt)
+          .toDF()
+      case "slicing" =>
+        partitioned_data.map(record => (record._1, new Data_slicing(record._2)))
+          .groupByKey(_._1)
+          .flatMapGroupsWithState(outputMode = OutputMode.Append(), GroupStateTimeout.ProcessingTimeTimeout)(updatePointsSlicing)
+          .toDF()
+    }
+
+    val output_data = out
+      .withColumn("timestamp", current_timestamp())
+      .withWatermark("timestamp", s"${slideSize} millisecond")
+      .groupBy("timestamp")
+      .agg(functions.sum("outliers").as("Total Outliers"))
+
+
+    val outliers = output_data
       .writeStream
       .outputMode("append")
-      .format("console")
-      .foreachBatch {
-        (batchDF: DataFrame, batchId: Long) =>
-          val data2 = batchDF
-            .map((record) => {
-              val id = record.get(0).toString.split("&")(0).toInt
-              val value = record.get(0).toString.split("&")(1).map(_.toDouble).to[ListBuffer]
-              val timestamp = id.toLong
-              new Data_basis(id, value, timestamp, 0)
-            })
-          //Start partitioning
-          val partitioned_data = arguments.partitioning match {
-            case "replication" =>
-              data2
-                .flatMap(record => replication_partitioning(partitions, record))
-            case "grid" =>
-              data2
-                .flatMap(record => grid_partitioning(partitions, record, common_R, arguments.dataset))
-            case "tree" =>
-              data2
-                .flatMap(record => myTree.tree_partitioning(partitions, record, common_R))
-          }
-
-          val output_data = partitioned_data
-            .map(record => (record._1, new Data_mcod(record._2)))
-            .groupByKey(_._1)
-            .mapGroupsWithState[PmcodState, SessionUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
-              case (sessionId: Int, events: Iterator[(Int, Data_mcod)], state: GroupState[PmcodState]) =>
-                val prevState = state.getOption.getOrElse {
-                  val PD = mutable.HashMap[Int, Data_mcod]()
-                  val MC = mutable.HashMap[Int, MicroCluster]()
-                  PmcodState(PD, MC)
-                }
-                val pmcodQ = new single_query.Pmcod(myQueries.head)
-                val outliers = pmcodQ.process(events, windowEnd, windowStart, prevState)
-                state.update(outliers._1)
-                println(state)
-                SessionUpdate(sessionId, outliers._1, false, outliers._2)
-            }
-          output_data.foreach(rec => println(batchId, rec.query.outliers))
-
-        //Start algorithm
-        //Start by mapping the basic data point to the algorithm's respective class
-        //Key the data by partition and window them
-        //Call the algorithm process
-        /*val output_data = arguments.space match {
-          case "single" =>
-            arguments.algorithm match {
-              case "naive" =>
-                val naiveQ = new single_query.Naive(myQueries.head)
-                val groupMetadataNaive = naiveQ.process(partitioned_data.map(record => (record._1, new Data_naive(record._2))), windowEnd, spark)
-                val groupMetadataNaiveQ = new GroupMetadataNaive(myQueries.head)
-                groupMetadataNaiveQ.process(groupMetadataNaive, windowEnd, spark)
-              case "advanced" =>
-                val advancedQ = new single_query.Advanced(myQueries.head)
-                val groupMetadataAdvanced = advancedQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
-                val groupMetadataAdvancedQ = new GroupMetadataAdvanced(myQueries.head)
-                groupMetadataAdvancedQ.process(groupMetadataAdvanced, windowEnd, spark)
-              case "advanced_extended" =>
-                val advancedExtQ = new single_query.Advanced_extended(myQueries.head)
-                advancedExtQ.process(partitioned_data.map(record => (record._1, new Data_advanced(record._2))), windowEnd, spark, windowStart)
-              case "slicing" =>
-                val slicingQ = new Slicing(myQueries.head)
-                slicingQ.process(partitioned_data.map(record => (record._1, new Data_slicing(record._2))), windowEnd, spark, windowStart)
-              case "pmcod" =>
-                val pmcodQ = new single_query.Pmcod(myQueries.head)
-                pmcodQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
-              case "pmcod_net" =>
-                val pmcodNetQ = new single_query.Pmcod_net(myQueries.head)
-                pmcodNetQ.process(partitioned_data.map(record => (record._1, new Data_mcod(record._2))), windowEnd, spark, windowStart)
-              case "rk" =>
-                arguments.algorithm match {
-                  case "amcod" =>
-                    val amcodQ = new rk_query.Amcod(myQueries)
-                    amcodQ.process(partitioned_data.map(record => (record._1, new Data_amcod(record._2))), windowEnd, spark, windowStart)
-                  case "sop" =>
-                    val sopQ = new rk_query.Sop(myQueries)
-                    sopQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "psod" =>
-                    val psodQ = new rk_query.Psod(myQueries)
-                    psodQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "pmcsky" =>
-                    val pmcskyQ = new rk_query.PmcSky(myQueries)
-                    pmcskyQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
-                }
-              case "rkws" =>
-                arguments.algorithm match {
-                  case "sop" =>
-                    val sopRKWSQ = new rkws_query.Sop(myQueries, common_S)
-                    sopRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "psod" =>
-                    val psodRKWSQ = new rkws_query.Psod(myQueries, common_S)
-                    psodRKWSQ.process(partitioned_data.map(record => (record._1, new Data_lsky(record._2))), windowEnd, spark, windowStart)
-                  case "pmcsky" =>
-                    val pmcskyRKWSQ = new rkws_query.PmcSky(myQueries, common_S)
-                    pmcskyRKWSQ.process(partitioned_data.map(record => (record._1, new Data_mcsky(record._2))), windowEnd, spark, windowStart)
-                }
-            }
-        }
-        val keyValPair = (batchId, output_data)
-        var outliers = ListBuffer[(Long, Query)]()
-        outliers += keyValPair
-        val printOutliers = new PrintOutliers()
-        printOutliers.process(outliers.toIterable)*/
-      }
+      .format("console")        // can be "orc", "json", "csv", etc.
+      /*.option("path", "/home/dimitris/outliers")*/
+      .option("truncate", "false")
       .start()
 
-    /*
-        query.awaitTermination()
-    */
-    windowedData.awaitTermination()
-
-    /*
-        saveToInflux.awaitTermination()
-    */
-    //Timestamp the data
-    /*
-
-       //Start writing output
-       if(arguments.DEBUG){
-       output_data
-         .keyBy(_._1)
-         .timeWindow(Time.milliseconds(common_S))
-         .process(new PrintOutliers)
-         .print
-       } else {
-         output_data
-           .keyBy(_._1)
-           .timeWindow(Time.milliseconds(common_S))
-           .process(new WriteOutliers)
-           .addSink(new InfluxDBSink(influx_conf))
-       }
-       env.execute("Distance-based outlier detection with Flink")*/
+    outliers.awaitTermination()
     spark.streams.active.foreach(_.stop)
   }
 
@@ -416,6 +348,83 @@ object Outlier_detection {
     Right(sb.toString())
   }
 
+  def updatePoints(key: Int, values: Iterator[(Int, Data_mcod)], state: GroupState[ListBuffer[(Int, Data_mcod)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int, Data_mcod)]()
+    }
+    var inputList = values.toList
+
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+      prevState.foreach(rec => {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
+          prevState -= rec
+        }
+      })
+    }
+    state.update(prevState)
+    // create the date/time formatters
+    var time_final = System.nanoTime()
+    val outliers = new single_query.Pmcod(myQueriesGlobal.head)
+      .process(prevState, windowEnd, windowStart)
+    time_final = System.nanoTime()
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString,outliers._2))
+  }
+
+  def updatePointsSlicing(key: Int, values: Iterator[(Int, Data_slicing)], state: GroupState[ListBuffer[(Int, Data_slicing)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int, Data_slicing)]()
+    }
+    var inputList = values.toList
+    /*if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+      inputList.to[ListBuffer].clear()
+    }*/
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+      prevState.foreach(rec => {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
+          prevState -= rec
+        }
+      })
+    }
+    state.update(prevState)
+    // create the date/time formatters
+    val outliers = new Slicing(myQueriesGlobal.head)
+      .process(prevState, windowEnd, windowStart)
+
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString,outliers._2))
+  }
+
+  def updatePointsAdvancedExt(key: Int, values: Iterator[(Int, Data_advanced)], state: GroupState[ListBuffer[(Int, Data_advanced)]]): Iterator[SessionUpdate] = {
+    var prevState = state.getOption.getOrElse {
+      ListBuffer[(Int, Data_advanced)]()
+    }
+    var inputList = values.toList
+    /*if (inputList.size == 1 && inputList(0)._2.c_point.c_flag == 2) {
+      inputList.to[ListBuffer].clear()
+    }*/
+    val inputListBuffer = inputList.to[ListBuffer]
+    prevState = prevState ++ inputListBuffer
+    val slide = (inputListBuffer.head._2.arrival / slideSize).floor.toInt * slideSize
+    if (inputListBuffer.head._2.arrival > (windowSize - slideSize)) {
+      prevState.foreach(rec => {
+        if (rec._2.arrival < slide - (windowSize - slideSize)) {
+          prevState -= rec
+        }
+      })
+    }
+    state.update(prevState)
+    // create the date/time formatters
+    val outliers = new Advanced_extended(myQueriesGlobal.head)
+      .process(prevState, windowEnd, windowStart)
+
+    Iterator(SessionUpdate(outliers._1.outliers.toString, key.toString, outliers._2))
+  }
+
   def dateTimeStringToEpoch(s: String, pattern: String): Long = DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).parse(s, (p: TemporalAccessor) => p.getLong(ChronoField.INSTANT_SECONDS))
 
   /** User-defined data type representing the input events */
@@ -433,14 +442,36 @@ object Outlier_detection {
   /**
     * User-defined data type representing the update information returned by mapGroupsWithState.
     *
-    * @param id         Id of the session
-    * @param pmcodState Current State
-    * @param expired    Is the session active or expired
+    * @param outliers Current State
     */
   case class SessionUpdate(
-                            id: Int,
-                            pmcodState: PmcodState,
-                            expired: Boolean,
-                            query: Query)
+                            outliers: String,
+                            partition: String,
+                            cpu_time: Long
+                          )
+
+  class EventMetric extends StreamingQueryListener{
+    override def onQueryStarted(event: QueryStartedEvent): Unit = {
+    }
+
+    override def onQueryProgress(event: QueryProgressEvent): Unit = {
+      val p = event.progress
+      //    println("id : " + p.id)
+      println("runId : "  + p.runId)
+      //    println("name : " + p.name)
+      println("batchid : " + p.batchId)
+      println("timestamp : " + p.timestamp)
+      println("triggerExecution" + p.durationMs.get("triggerExecution"))
+      println(p.eventTime)
+      println("inputRowsPerSecond : " + p.inputRowsPerSecond)
+      println("numInputRows : " + p.numInputRows)
+      println("processedRowsPerSecond : " + p.processedRowsPerSecond)
+      println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    }
+
+    override def onQueryTerminated(event: QueryTerminatedEvent): Unit = {
+
+    }
+  }
 
 }

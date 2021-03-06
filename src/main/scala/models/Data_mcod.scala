@@ -5,7 +5,7 @@ import scala.collection.mutable.ListBuffer
 
 object ExtraDataFrameOperationsMcod {
   object implicits {
-    implicit def dFWithExtraOperations(c_point: Data_basis) = Data_mcod(c_point: Data_basis)
+    implicit def dFWithExtraOperations(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int) = Data_basis(c_id: Int, c_val: ListBuffer[Double], c_arrival: Long, c_flag: Int)
   }
 }
 
@@ -52,7 +52,8 @@ case class Data_mcod(c_point: Data_basis) extends Serializable {
     else nn_before.filter(_ >= time).min
   }
 
-  def compareTo(t: Data_basis): Int = {
+<<<<<< CPU_TOTAL
+  def compareTo(t: Data_naive): Int = {
     val dim = Math.min(this.dimensions, t.dimensions)
     for (i <- 0 until dim) {
       if (this.value(i) > t.value(i)) +1

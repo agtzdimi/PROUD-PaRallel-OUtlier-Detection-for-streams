@@ -21,13 +21,13 @@ class Slicing(c_query: Query) {
   val k: Int = query.k
   val outliers_trigger: Long = -1L
 
-  def process(elements: Dataset[(Int, Data_slicing)], windowEnd: Long, spark: SparkSession, windowStart: Long):Query = {
+  def process(elements: ListBuffer[(Int, Data_slicing)], windowEnd: Long, windowStart: Long):(Query,Long) = {
 
     //Metrics
     counter += 1
     val time_init = System.currentTimeMillis()
 
-    val inputList = elements.rdd.collect().toList.toIterable
+    val inputList = elements.filter(p => p._2.c_point.c_flag != 2)
     //new variables
     val latest_slide = windowEnd - slide
     val nonRandomPromotion = new PromotionFunction[Data_slicing] {
@@ -59,34 +59,6 @@ class Slicing(c_query: Query) {
     }
     val myTrees = mutable.HashMap[Long, MTree[Data_slicing]]((latest_slide, myTree))
     var current = SlicingState(myTrees, myTrigger)
-
-    //populate mtree
-    if (current == null) {
-      var myTrigger = mutable.HashMap[Long, mutable.Set[Int]]()
-      myTrigger.+=((outliers_trigger, mutable.Set()))
-      var next_slide = windowStart
-      while(next_slide <= windowEnd - slide){
-        myTrigger.+=((next_slide, mutable.Set()))
-        next_slide += slide
-      }
-      for (el <- inputList) {
-        myTree.add(el._2)
-      }
-      val myTrees = mutable.HashMap[Long, MTree[Data_slicing]]((latest_slide, myTree))
-      current = SlicingState(myTrees, myTrigger)
-    } else {
-      inputList
-        .filter(el => el._2.arrival >= windowEnd - slide)
-        .foreach(el => {
-          myTree.add(el._2)
-        })
-      var max = current.triggers.keySet.max + slide
-      while (max <= windowEnd - slide){
-        current.triggers.+=((max, mutable.Set[Int]()))
-        max += slide
-      }
-      current.trees.+=((latest_slide, myTree))
-    }
 
     //Trigger leftover slides
     val slow_triggers = current.triggers.keySet.filter(p => p < windowStart && p!= -1L).toList
@@ -132,9 +104,9 @@ class Slicing(c_query: Query) {
 
     //Metrics
     val time_final = System.currentTimeMillis()
-    cpu_time += (time_final - time_init)
+    cpu_time = time_final - time_init
 
-    tmpQuery
+    (tmpQuery,cpu_time)
   }
 
   def trigger_point(point: Data_slicing, windowEnd: Long, current: SlicingState, windowStart: Long): Unit = {
@@ -162,7 +134,6 @@ class Slicing(c_query: Query) {
     }
     if (neigh_counter < k) {
       current.triggers(outliers_trigger).+=(point.id)
-      println(point)
     }
   }
 

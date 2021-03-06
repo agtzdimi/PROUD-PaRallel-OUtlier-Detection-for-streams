@@ -2,7 +2,15 @@ ThisBuild / version := "3.1.0"
 ThisBuild / organization := "org.auth.csd.datalab"
 ThisBuild / scalaVersion := "2.12.12"
 
-val sparkVersion = "2.4.5"
+val sparkVersion = "3.0.1"
+assemblyMergeStrategy in assembly := {
+  case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+  case x => MergeStrategy.first
+}
+assembly / mainClass := Some("outlier_detection.Outlier_detection")
+// exclude Scala library from assembly
+assembly / assemblyOption  := (assembly / assemblyOption).value.copy(includeScala = false)
+
 
 lazy val root = (project in file(".")).
   settings(

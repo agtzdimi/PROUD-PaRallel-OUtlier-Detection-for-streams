@@ -26,7 +26,7 @@ object Utils {
     val R: Double = query.R
     val k: Int = query.k
 
-    def process(elements: scala.Iterable[Data_naive], windowEnd: Long, spark: SparkSession): Query = {
+    def process(elements: ListBuffer[Data_naive],windowStart: Int): Query = {
       var newMap = mutable.HashMap[Int, Data_naive]()
       //all elements are new to the window so we have to combine the same ones
       //and add them to the map
@@ -40,52 +40,13 @@ object Utils {
         }
       }
       var current = Metadata_naive(newMap)
-      if (current == null) { //populate list for the first time
-        var newMap = mutable.HashMap[Int, Data_naive]()
-        //all elements are new to the window so we have to combine the same ones
-        //and add them to the map
-        for (el <- elements) {
-          val oldEl: Data_naive = newMap.getOrElse(el.id, null)
-          if (oldEl == null) {
-            newMap += ((el.id, el))
-          } else {
-            val newValue = combine_elements(oldEl, el, k)
-            newMap += ((el.id, newValue))
-          }
-        }
-        current = Metadata_naive(newMap)
-      } else { //update list
-        //first remove old elements and elements that are safe inliers
-        var forRemoval = ListBuffer[Int]()
-        for (el <- current.outliers.values) {
-          if (elements.count(_.id == el.id) == 0) {
-            forRemoval = forRemoval.+=(el.id)
-          }
-        }
-        forRemoval.foreach(el => current.outliers -= el)
-        //then insert or combine elements
-        for (el <- elements) {
-          val oldEl = current.outliers.getOrElse(el.id, null)
-          if (oldEl == null) {
-            current.outliers.+=((el.id, el))
-          } else {
-            if (el.arrival < windowEnd - slide) {
-              oldEl.count_after = el.count_after
-              current.outliers += ((el.id, oldEl))
-            } else {
-              val newValue = combine_elements(oldEl, el, k)
-              current.outliers += ((el.id, newValue))
-            }
-          }
-        }
-      }
 
       var outliers = 0
       for (el <- current.outliers.values) {
-        val nnBefore = el.nn_before.count(_ >= windowEnd - W)
+        val nnBefore = el.nn_before.count(_ >= windowStart)
         if (nnBefore + el.count_after < k) outliers += 1
       }
-      val tmpQuery = Query(query.R,query.k,query.W,query.S,outliers)
+      val tmpQuery = Query(query.R, query.k, query.W, query.S, outliers)
       tmpQuery
     }
   }
